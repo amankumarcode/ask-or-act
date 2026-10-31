@@ -1,0 +1,7 @@
+name: baseline
+description: Minimal prompt, run_sql only. Cannot explore the schema with tools or ask the user.
+prompt: agent/minimal_v1
+tool_descriptions: tools/v1
+tools:
+  - run_sql
+  - final_answer

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
+
+# Generated data and run artifacts (rebuilt by `make setup` / `make eval`)
+data/
+runs/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/

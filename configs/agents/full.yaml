@@ -1,0 +1,12 @@
+name: full
+description: Full prompt and every tool. Explores the schema, checks values, asks when ambiguous.
+prompt: agent/full_v1
+tool_descriptions: tools/v1
+tools:
+  - list_tables
+  - describe_table
+  - sample_rows
+  - get_column_stats
+  - run_sql
+  - ask_user
+  - final_answer

@@ -1,0 +1,14 @@
+name: full_haiku
+description: Same as full, on the cheaper model.
+prompt: agent/full_v1
+tool_descriptions: tools/v1
+tools:
+  - list_tables
+  - describe_table
+  - sample_rows
+  - get_column_stats
+  - run_sql
+  - ask_user
+  - final_answer
+llm:
+  model: anthropic/claude-haiku-5-5
