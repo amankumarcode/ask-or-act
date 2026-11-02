@@ -7,7 +7,10 @@ and everything else patches the global settings, e.g.
 
 from dotenv import load_dotenv
 
+from askoract import datasets
 from askoract.config import AgentProfile, Settings, list_profiles, load_profile, load_settings
+from askoract.datasets import BuildReport, Dataset
+from askoract.db import Database
 
 AGENT_PREFIX = "agent."
 
@@ -41,3 +44,24 @@ def get_profile(
 
 def get_profiles(settings: Settings | None = None) -> list[str]:
     return list_profiles(settings or get_settings())
+
+
+def get_dataset(name: str | None = None, settings: Settings | None = None) -> Dataset:
+    return datasets.get_dataset(settings or get_settings(), name)
+
+
+def build_dataset(
+    name: str | None = None,
+    variant: str | None = None,
+    *,
+    force: bool = False,
+    settings: Settings | None = None,
+) -> list[BuildReport]:
+    return get_dataset(name, settings).build(variant, force=force)
+
+
+def open_database(
+    name: str | None = None, variant: str = "pristine", settings: Settings | None = None
+) -> Database:
+    """A read-only connection to a built dataset variant."""
+    return get_dataset(name, settings).open(variant)

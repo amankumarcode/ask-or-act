@@ -1,0 +1,24 @@
+# Comments shown by describe_table. SQLite has no COMMENT syntax, so they live here.
+# Keep them factual, the way a real data team documents columns. They must not settle
+# business definitions such as what "revenue" means: those are what the agent should ask about.
+# Format: table -> {"_table": table comment, <column>: column comment}
+
+Orders:
+  OrderDate: Stored as text, either 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'.
+  RequiredDate: Date the customer needs the order delivered by.
+  ShippedDate: NULL until the order ships.
+  Freight: Shipping cost charged to the customer for the order.
+  ShipVia: Shipper used; references Shippers.ShipperID.
+
+Order Details:
+  _table: One row per product on an order.
+  UnitPrice: Price per unit at the time of the order.
+  Discount: Fraction of the line price discounted, between 0 and 1.
+
+Products:
+  UnitPrice: Current list price.
+  UnitsInStock: Units currently in the warehouse.
+  Discontinued: "'1' if the product is discontinued, else '0' (stored as text)."
+
+Customers:
+  Region: Sales region of the customer's country.

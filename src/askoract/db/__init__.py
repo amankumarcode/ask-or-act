@@ -11,6 +11,7 @@ from askoract.db.base import (
     TableInfo,
     TableSchema,
 )
+from askoract.db.sqlite import SqliteDatabase  # registers the "sqlite" engine
 
 __all__ = [
     "ENGINES",
@@ -22,6 +23,7 @@ __all__ = [
     "QueryResult",
     "QueryTimeout",
     "ReadOnlyViolation",
+    "SqliteDatabase",
     "TableInfo",
     "TableSchema",
 ]

@@ -31,7 +31,7 @@ class ForeignKey:
 @dataclass(frozen=True)
 class TableInfo:
     name: str
-    row_count: int
+    row_count: int | None  # None for views (counting would run the view's query)
     kind: str = "table"  # "table" | "view"
 
 

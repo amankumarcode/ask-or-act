@@ -5,7 +5,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def repo_root() -> Path:
     return REPO_ROOT
 

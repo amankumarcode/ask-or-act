@@ -1,0 +1,25 @@
+name: northwind
+description: >
+  Northwind Traders, a food import/export company: customers, orders, order lines,
+  products, suppliers, shippers, employees. Community SQLite edition with about 16k orders
+  dated 2012-2023.
+builder: sqlite_file
+
+source:
+  # jpwhite3/northwind-SQLite3, pinned to a commit so the checksum never drifts.
+  url: https://raw.githubusercontent.com/jpwhite3/northwind-SQLite3/4f56e7f5906dfd23b25244c5bfe8fb5da6402efd/dist/northwind.db
+  sha256: 2f4f5c68dfcd33ba27373eae48c7a4869800c68095ee0f9f0da494f83382a877
+  filename: northwind.db
+
+variants:
+  pristine:
+    description: The source database, unchanged. Suite A runs here.
+    traps: []
+  traps:
+    description: Source plus deliberate pitfalls, applied in this order. Suite B runs here.
+    traps:
+      - cancelled_status   # first: payments and shipments depend on Status
+      - legacy_customers   # before active_customer, so the snapshot predates new accounts
+      - active_customer
+      - amount_in_cents
+      - duplicate_join
