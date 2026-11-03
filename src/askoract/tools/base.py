@@ -28,6 +28,7 @@ class ToolContext:
     user: UserChannel
     limits: Limits
     tracer: Tracer = field(default_factory=Tracer)
+    clarifications: list[tuple[str, str]] = field(default_factory=list)  # (question, reply)
 
 
 @dataclass
@@ -74,6 +75,12 @@ class Tool(ABC):
 TOOLS: Registry[type[Tool]] = Registry("tool")
 
 
+def register_tool[T: type[Tool]](cls: T) -> T:
+    """Class decorator: register a tool under its own `name`."""
+    TOOLS.add(cls.name, cls)
+    return cls
+
+
 class Toolset:
     """The instantiated tools one agent profile is allowed to use."""
 
@@ -86,6 +93,11 @@ class Toolset:
         if missing:
             raise KeyError(f"no description for tools: {', '.join(missing)}")
         return cls([TOOLS.get(n)(descriptions[n]) for n in names])
+
+    def add(self, tool: Tool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(f"tool {tool.name!r} is already in the toolset")
+        self._tools[tool.name] = tool
 
     def specs(self) -> list[ToolSpec]:
         return [t.spec() for t in self._tools.values()]

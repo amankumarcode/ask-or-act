@@ -25,6 +25,7 @@ from askoract.db.base import (
     ReadOnlyViolation,
     TableInfo,
     TableSchema,
+    quote_ident,
 )
 
 # table -> {"_table": table comment, "<column>": column comment}
@@ -38,10 +39,6 @@ _ALLOWED_ACTIONS = {
 }
 _ALLOWED_PRAGMAS = {"table_info", "table_xinfo", "foreign_key_list", "index_list", "index_info"}
 _PROGRESS_EVERY_N_OPS = 10_000
-
-
-def _quote_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
 
 
 class SqliteDatabase:
@@ -108,7 +105,7 @@ class SqliteDatabase:
         for name, kind in objects:
             # Counting a view runs its whole query, which can be slow; skip it.
             count = (
-                self._internal(f"SELECT COUNT(*) FROM {_quote_ident(name)}")[0][0]
+                self._internal(f"SELECT COUNT(*) FROM {quote_ident(name)}")[0][0]
                 if kind == "table"
                 else None
             )
@@ -117,7 +114,7 @@ class SqliteDatabase:
 
     def describe(self, table: str) -> TableSchema:
         name = self.resolve_table(table)
-        q = _quote_ident(name)
+        q = quote_ident(name)
         comments = self.comments.get(name, {})
         columns = [
             ColumnInfo(

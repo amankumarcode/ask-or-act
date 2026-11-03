@@ -1,5 +1,6 @@
 """Command-line interface: a thin shell over askoract.api."""
 
+import json
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -10,6 +11,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from askoract import __version__, api
+from askoract.users import TerminalUser
 
 app = typer.Typer(
     help="ask-or-act: a SQL data-analyst agent that answers, asks, or declines.",
@@ -20,6 +22,8 @@ config_app = typer.Typer(help="Inspect configuration.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
 db_app = typer.Typer(help="Inspect built databases.", no_args_is_help=True)
 app.add_typer(db_app, name="db")
+tool_app = typer.Typer(help="List agent tools or call one by hand.", no_args_is_help=True)
+app.add_typer(tool_app, name="tool")
 
 console = Console()
 
@@ -124,6 +128,46 @@ def db_traps(dataset: DatasetOption = None) -> None:
             console.rule(f"[bold]{trap.id}[/]  (variant: {variant})")
             console.print(f"[bold]Injects:[/] {trap.summary}")
             console.print(f"[bold]Correct behavior:[/] {trap.correct_behavior}")
+
+
+@tool_app.command("list")
+def tool_list(profile: ProfileOption = None) -> None:
+    """Show the tools a profile gets and the descriptions the model sees."""
+    settings = api.get_settings()
+    prof = api.get_profile(profile, settings=settings)
+    toolset = api.build_toolset(prof, dialect="sqlite", settings=settings)
+    console.print(f"[bold]profile {prof.name}[/]  (descriptions: {prof.tool_descriptions})")
+    for spec in toolset.specs():
+        args = ", ".join(spec.parameters.get("properties", {})) or "-"
+        console.rule(f"[bold]{spec.name}[/]({args})")
+        console.print(spec.description)
+
+
+@tool_app.command("run")
+def tool_run(
+    name: Annotated[str, typer.Argument(help="Tool name, e.g. describe_table.")],
+    args: Annotated[str, typer.Option("--args", "-a", help="JSON arguments.")] = "{}",
+    dataset: DatasetOption = None,
+    variant: Annotated[str, typer.Option(help="Dataset variant.")] = "pristine",
+) -> None:
+    """Call one tool directly against a built database, with no LLM involved."""
+    try:
+        arguments = json.loads(args)
+    except json.JSONDecodeError as exc:
+        console.print(f"[red]--args is not valid JSON: {exc}[/]")
+        raise typer.Exit(code=2) from None
+    try:
+        result = api.run_tool(
+            name, arguments, dataset=dataset, variant=variant, user=TerminalUser(console)
+        )
+    except KeyError as exc:
+        console.print(f"[red]{exc.args[0]}[/]")
+        raise typer.Exit(code=2) from None
+    style = "red" if result.is_error else "green"
+    console.rule(f"[{style}]{name}{'  (error)' if result.is_error else ''}")
+    console.print(result.content, markup=False, highlight=False)
+    if result.is_error:
+        raise typer.Exit(code=1)
 
 
 @app.command()

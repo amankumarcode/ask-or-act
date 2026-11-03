@@ -31,6 +31,7 @@ class Limits(_Strict):
     max_clarifications: int = 2
     sql_max_rows: int = 200
     sql_timeout_s: float = 10.0
+    max_output_chars: int = 8000  # cap on one tool result shown to the model
 
 
 class ModelPrice(_Strict):

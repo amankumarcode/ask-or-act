@@ -1,6 +1,9 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
+
+from askoract.db import SqliteDatabase
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,3 +42,34 @@ limits: {max_steps: 5}
 """
     )
     return tmp_path
+
+
+@pytest.fixture
+def db_path(tmp_path: Path) -> Path:
+    """A tiny synthetic database: a table name with a space, a view, a blob, NULLs."""
+    path = tmp_path / "tiny.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE Customers (CustomerID TEXT PRIMARY KEY, Country TEXT);
+        CREATE TABLE "Order Details" (
+            OrderID INTEGER, CustomerID TEXT REFERENCES Customers (CustomerID), Qty INTEGER
+        );
+        CREATE TABLE Files (id INTEGER PRIMARY KEY, data BLOB, price REAL);
+        CREATE VIEW German AS SELECT * FROM Customers WHERE Country = 'Germany';
+        INSERT INTO Customers VALUES
+            ('A', 'Germany'), ('B', 'France'), ('C', 'Germany'), ('D', NULL);
+        INSERT INTO "Order Details" VALUES (1, 'A', 5), (2, 'B', 7);
+        INSERT INTO Files VALUES (1, x'00FF00FF', 2407537.5492);
+        """
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+@pytest.fixture
+def db(db_path: Path):
+    comments = {"Customers": {"_table": "People", "Country": "ISO"}}
+    with SqliteDatabase(db_path, comments=comments) as d:
+        yield d

@@ -99,3 +99,24 @@ def test_untouched_tables_identical_to_pristine(built):
             rows.append(conn.execute(sql).fetchall())
             conn.close()
         assert rows[0] == rows[1], table
+
+
+def test_tools_expose_traps_on_real_data(built):
+    """The exploration tools surface each trap's evidence to an agent that looks."""
+    from askoract.config import Limits
+    from askoract.tools import TOOLS, ToolContext
+    from askoract.users import NoUser
+
+    with built.open("traps") as db:
+        ctx = ToolContext(db=db, user=NoUser(), limits=Limits())
+
+        def call(name, args):
+            return TOOLS.get(name)("d")(args, ctx)
+
+        assert (
+            "Cancelled" in call("get_column_stats", {"table": "Orders", "column": "Status"}).content
+        )
+        amount = call("get_column_stats", {"table": "Payments", "column": "Amount"}).data
+        assert amount["min"] > 1000  # cents: no order is under $10
+        assert "2019 migration" in call("describe_table", {"table": "CustomerMaster"}).content
+        assert "IsActive" in call("describe_table", {"table": "Customers"}).content

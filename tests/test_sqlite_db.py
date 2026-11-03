@@ -1,39 +1,10 @@
 """Read-only SQLite engine, on a tiny synthetic database (no network)."""
 
 import hashlib
-import sqlite3
 
 import pytest
 
-from askoract.db import QueryError, QueryTimeout, ReadOnlyViolation, SqliteDatabase
-
-
-@pytest.fixture
-def db_path(tmp_path):
-    path = tmp_path / "tiny.db"
-    conn = sqlite3.connect(path)
-    conn.executescript(
-        """
-        CREATE TABLE Customers (CustomerID TEXT PRIMARY KEY, Country TEXT);
-        CREATE TABLE "Order Details" (
-            OrderID INTEGER, CustomerID TEXT REFERENCES Customers (CustomerID), Qty INTEGER
-        );
-        CREATE VIEW German AS SELECT * FROM Customers WHERE Country = 'Germany';
-        INSERT INTO Customers VALUES ('A', 'Germany'), ('B', 'France'), ('C', 'Germany');
-        INSERT INTO "Order Details" VALUES (1, 'A', 5), (2, 'B', 7);
-        """
-    )
-    conn.commit()
-    conn.close()
-    return path
-
-
-@pytest.fixture
-def db(db_path):
-    with SqliteDatabase(
-        db_path, comments={"Customers": {"_table": "People", "Country": "ISO"}}
-    ) as d:
-        yield d
+from askoract.db import QueryError, QueryTimeout, ReadOnlyViolation
 
 
 def _sha(path):
@@ -46,7 +17,7 @@ def test_select_and_row_limit(db):
     assert res.rows == [("A",), ("B",)]
     assert res.truncated is True
     full = db.execute("SELECT COUNT(*) FROM Customers", max_rows=10, timeout_s=5)
-    assert full.rows == [(3,)] and full.truncated is False
+    assert full.rows == [(4,)] and full.truncated is False
 
 
 def test_table_name_with_space(db):
@@ -98,7 +69,7 @@ def test_timeout(db):
 
 def test_list_tables(db):
     tables = {t.name: t for t in db.list_tables()}
-    assert tables["Customers"].row_count == 3
+    assert tables["Customers"].row_count == 4
     assert tables["Order Details"].row_count == 2
     assert tables["German"].kind == "view" and tables["German"].row_count is None
 

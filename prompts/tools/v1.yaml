@@ -1,0 +1,41 @@
+# Tool descriptions shown to the model, version 1.
+# Placeholders use ${name} and are filled at runtime: dialect, max_rows, max_clarifications.
+# Edit a copy (v2.yaml) rather than this file once results have been published with it.
+
+list_tables: >-
+  List every table and view in the database, with row counts for tables. Start here to
+  see what data exists before deciding which tables a question needs.
+
+describe_table: >-
+  Show a table's columns with type, primary key, NOT NULL, default, foreign keys (how it
+  joins to other tables), and any documentation comment. Use it before writing SQL against
+  a table so you use exact column names and correct joins.
+
+sample_rows: >-
+  Return a few real rows from a table, spread across the whole table rather than only the
+  first rows. Use it to see actual value formats (dates, codes, flags, units) before you
+  rely on them in a filter or calculation.
+
+get_column_stats: >-
+  Profile one column: row count, NULL count, distinct count, min, max, average for numeric
+  columns, and the most frequent values with their counts. Use it to find status codes and
+  flags, see how NULL is used, and spot values whose scale looks wrong (for example amounts
+  stored in cents).
+
+run_sql: >-
+  Run one read-only ${dialect} SELECT query and return at most ${max_rows} rows. Quote
+  identifiers that contain spaces with double quotes, e.g. "Order Details". The connection
+  rejects any write. On failure you get the error message: fix the query and try again.
+
+ask_user: >-
+  Ask the person who asked the question one clarifying question. Use it only when the
+  request has several reasonable interpretations that would give materially different
+  answers, such as an undefined business term or an unclear time period, and the data
+  cannot settle it. Ask in business language and offer the concrete options. Never ask
+  about things you can look up in the database. At most ${max_clarifications} per task.
+
+final_answer: >-
+  Submit your final answer and end the task. Use status "answered" with the single SQL
+  query whose result is the answer, or status "cannot_answer" when the database does not
+  contain the data needed (say what is missing; do not guess or substitute other data).
+  State any assumption you made in one line.

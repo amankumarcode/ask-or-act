@@ -26,6 +26,7 @@ agent_defaults:
     max_clarifications: 2     # ask_user calls per question
     sql_max_rows: 200         # rows returned to the model per query
     sql_timeout_s: 10.0
+    max_output_chars: 8000    # cap on one tool result shown to the model
 
 simulated_user:
   llm:

@@ -51,6 +51,11 @@ class QueryResult:
     elapsed_ms: float = 0.0
 
 
+def quote_ident(name: str) -> str:
+    """Standard SQL identifier quoting; valid in SQLite and Postgres."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 class DatabaseError(Exception):
     """Base error. Messages are written for the agent to read and recover from."""
 
