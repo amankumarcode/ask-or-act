@@ -18,8 +18,10 @@ cache:
 agent_defaults:
   llm:
     model: anthropic/claude-sonnet-5-5
-    temperature: 0.0
-    max_tokens: 2048
+    max_tokens: 16000
+    # temperature is deliberately unset: current Claude models reject non-default
+    # sampling parameters. Reruns are reproducible through the response cache instead.
+    prompt_caching: true
   limits:
     max_steps: 15             # LLM turns per question
     max_cost_usd: 0.50        # budget per question
@@ -31,13 +33,13 @@ agent_defaults:
 simulated_user:
   llm:
     model: anthropic/claude-haiku-5-5   # deliberately a different model from the agent
-    temperature: 0.0
-    max_tokens: 512
+    max_tokens: 2048
   prompt: sim_user/v1
 
 dataset: northwind
 default_profile: full
 
-# USD per million tokens. Used only when LiteLLM's built-in price table lacks a model.
+# USD per million tokens. A model listed here overrides LiteLLM's built-in price table;
+# list one only if LiteLLM lacks it (it already knows claude-sonnet-5-5 and claude-haiku-5-5).
 prices: {}
-#  anthropic/claude-sonnet-5-5: {input_per_mtok: 3.0, output_per_mtok: 15.0}
+#  openrouter/some/model: {input_per_mtok: 1.0, output_per_mtok: 4.0}

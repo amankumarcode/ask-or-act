@@ -7,10 +7,14 @@ from typing import Annotated, NoReturn
 import typer
 import yaml
 from rich.console import Console
+from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
 
 from askoract import __version__, api
+from askoract.agent.types import Outcome
+from askoract.datasets.sqlite_file import DatasetBuildError
+from askoract.tracing.console import ConsoleSink
 from askoract.users import TerminalUser
 
 app = typer.Typer(
@@ -171,9 +175,59 @@ def tool_run(
 
 
 @app.command()
-def ask(question: str, profile: ProfileOption = None, set_: SetOption = None) -> None:
-    """Ask the agent one question."""
-    _not_yet(4)
+def ask(
+    question: Annotated[str, typer.Argument(help="A business question, in quotes.")],
+    profile: ProfileOption = None,
+    dataset: DatasetOption = None,
+    variant: Annotated[str, typer.Option(help="Dataset variant.")] = "pristine",
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Hide live steps.")] = False,
+    set_: SetOption = None,
+) -> None:
+    """Ask the agent one question. Steps print live; the full trace goes to runs/."""
+    sinks = [] if quiet else [ConsoleSink(console)]
+    try:
+        out = api.ask(
+            question,
+            profile=profile,
+            dataset=dataset,
+            variant=variant,
+            user=TerminalUser(console),
+            overrides=set_,
+            sinks=sinks,
+        )
+    except (KeyError, FileNotFoundError, DatasetBuildError) as exc:
+        console.print(f"[red]{exc.args[0] if exc.args else exc}[/]")
+        raise typer.Exit(code=2) from None
+    _print_result(out)
+    if out.result.outcome is Outcome.ERROR:
+        raise typer.Exit(code=1)
+
+
+def _print_result(out: api.AskRun) -> None:
+    r = out.result
+    final = r.final
+    ok = r.outcome in (Outcome.ANSWERED, Outcome.CANNOT_ANSWER)
+    console.print()
+    if final:
+        body = f"[bold]{final.answer}[/]"
+        if final.assumption:
+            body += f"\n\n[dim]Assumption:[/] {final.assumption}"
+        console.print(Panel(body, title=f"[bold]{r.outcome.value}", border_style="green"))
+        if final.sql:
+            console.print(Syntax(final.sql, "sql", background_color="default", word_wrap=True))
+    else:
+        detail = f": {r.error}" if r.error else ""
+        console.print(Panel(f"No final answer{detail}", title=r.outcome.value, border_style="red"))
+    u = r.usage
+    cache_note = " (all cached)" if r.llm_calls and r.billed_usd == 0 else ""
+    console.print(
+        f"[dim]{r.llm_calls} LLM calls · {len(r.steps)} tool calls · "
+        f"{u.input_tokens:,} in / {u.output_tokens:,} out tokens · "
+        f"cost ${r.cost_usd:.4f}, billed ${r.billed_usd:.4f}{cache_note} · "
+        f"{r.latency_ms / 1000:.1f}s[/]"
+    )
+    trace = out.trace_path.relative_to(Path.cwd(), walk_up=True)
+    console.print(f"[dim]trace: {trace}[/]", style=None if ok else "red")
 
 
 @app.command("eval")

@@ -55,8 +55,10 @@ class AgentResult:
     clarifications: list[tuple[str, str]] = field(default_factory=list)  # (question, reply)
     llm_calls: int = 0
     usage: Usage = field(default_factory=Usage)
-    cost_usd: float = 0.0
+    cost_usd: float = 0.0  # nominal cost of every LLM call, cached or not
+    billed_usd: float = 0.0  # what this run actually spent (cache hits are free)
     latency_ms: float = 0.0
+    error: str | None = None
 
     @property
     def asked(self) -> bool:

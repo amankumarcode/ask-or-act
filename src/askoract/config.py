@@ -20,9 +20,15 @@ class _Strict(BaseModel):
 
 
 class LLMConfig(_Strict):
-    model: str
-    temperature: float = 0.0
-    max_tokens: int = 2048
+    model: str  # LiteLLM model string; the prefix picks the provider
+    max_tokens: int = 16000
+    # None = don't send it. Current Claude models reject non-default sampling parameters,
+    # so reproducibility comes from the response cache, not from temperature 0.
+    temperature: float | None = None
+    prompt_caching: bool = True  # provider-side prefix caching, where supported
+    timeout_s: float = 300.0
+    max_retries: int = 2
+    params: dict[str, Any] = Field(default_factory=dict)  # extra provider kwargs, passed as-is
 
 
 class Limits(_Strict):

@@ -5,14 +5,31 @@ and everything else patches the global settings, e.g.
     --set agent.llm.model=openrouter/openai/gpt-5  --set seed=7
 """
 
+from dataclasses import dataclass
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 from askoract import datasets
-from askoract.config import AgentProfile, Settings, list_profiles, load_profile, load_settings
+from askoract.agent.loop import Agent
+from askoract.agent.types import AgentResult
+from askoract.config import (
+    AgentProfile,
+    LLMConfig,
+    Settings,
+    list_profiles,
+    load_profile,
+    load_settings,
+)
 from askoract.datasets import BuildReport, Dataset
 from askoract.db import Database
-from askoract.prompts import load_tool_descriptions
+from askoract.llm.base import LLMClient
+from askoract.llm.cache import ResponseCache
+from askoract.llm.client import LiteLLMClient
+from askoract.prompts import load_prompt, load_tool_descriptions
+from askoract.runs import Run, new_run
 from askoract.tools import TOOLS, Tool, ToolContext, ToolResult, Toolset
+from askoract.tracing.tracer import Sink, Tracer
 from askoract.users import NoUser, UserChannel
 
 AGENT_PREFIX = "agent."
@@ -115,3 +132,91 @@ def run_tool(
         return tool(arguments, ctx)
     finally:
         db.close()
+
+
+_CACHES: dict[Path, ResponseCache] = {}
+
+
+def make_llm(
+    config: LLMConfig,
+    *,
+    settings: Settings | None = None,
+    tracer: Tracer | None = None,
+    role: str = "agent",
+) -> LiteLLMClient:
+    """An LLM client wired to the shared response cache and the price overrides."""
+    settings = settings or get_settings()
+    cache = None
+    if settings.cache.enabled:
+        path = settings.cache.path
+        if path not in _CACHES:  # one connection per cache file per process
+            _CACHES[path] = ResponseCache(path)
+        cache = _CACHES[path]
+    return LiteLLMClient(config, cache=cache, prices=settings.prices, tracer=tracer, role=role)
+
+
+def build_agent(
+    profile: AgentProfile,
+    db: Database,
+    *,
+    settings: Settings | None = None,
+    tracer: Tracer | None = None,
+    llm: LLMClient | None = None,
+    extra_tools: list[Tool] | None = None,
+) -> Agent:
+    settings = settings or get_settings()
+    tracer = tracer or Tracer()
+    system_prompt = load_prompt(
+        settings,
+        profile.prompt,
+        dialect=db.dialect,
+        db_name=db.name,
+        max_clarifications=profile.limits.max_clarifications,
+    )
+    return Agent(
+        llm=llm or make_llm(profile.llm, settings=settings, tracer=tracer),
+        toolset=build_toolset(profile, db.dialect, settings=settings, extra_tools=extra_tools),
+        system_prompt=system_prompt,
+        limits=profile.limits,
+        tracer=tracer,
+    )
+
+
+@dataclass(frozen=True)
+class AskRun:
+    result: AgentResult
+    run: Run
+    trace_path: Path
+
+
+def ask(
+    question: str,
+    *,
+    profile: str | None = None,
+    dataset: str | None = None,
+    variant: str = "pristine",
+    user: UserChannel | None = None,
+    overrides: list[str] | None = None,
+    sinks: list[Sink] | None = None,
+    llm: LLMClient | None = None,
+    settings: Settings | None = None,
+) -> AskRun:
+    """Answer one question end to end, writing a trace to runs/<run_id>/traces/ask.jsonl."""
+    settings = settings or get_settings(overrides)
+    prof = get_profile(profile, overrides, settings=settings)
+    db = open_database(dataset, variant, settings)
+    run = new_run(
+        settings,
+        "ask",
+        [prof],
+        extra={"question": question, "dataset": dataset or settings.dataset, "variant": variant},
+    )
+    tracer = run.tracer("ask", sinks=sinks, profile=prof.name)
+    try:
+        agent = build_agent(prof, db, settings=settings, tracer=tracer, llm=llm)
+        ctx = ToolContext(db=db, user=user or NoUser(), limits=prof.limits, tracer=tracer)
+        result = agent.run(question, ctx)
+    finally:
+        tracer.close()
+        db.close()
+    return AskRun(result=result, run=run, trace_path=run.trace_path("ask"))
