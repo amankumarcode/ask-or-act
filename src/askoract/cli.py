@@ -14,8 +14,9 @@ from rich.table import Table
 from askoract import __version__, api
 from askoract.agent.types import Outcome
 from askoract.datasets.sqlite_file import DatasetBuildError
+from askoract.llm.client import LLMError
 from askoract.tracing.console import ConsoleSink
-from askoract.users import TerminalUser
+from askoract.users import TerminalUser, leak_signals
 
 app = typer.Typer(
     help="ask-or-act: a SQL data-analyst agent that answers, asks, or declines.",
@@ -180,6 +181,14 @@ def ask(
     profile: ProfileOption = None,
     dataset: DatasetOption = None,
     variant: Annotated[str, typer.Option(help="Dataset variant.")] = "pristine",
+    sim_intent: Annotated[
+        str | None,
+        typer.Option(
+            "--sim-intent",
+            help="Let a simulated user answer clarifying questions, holding this hidden intent. "
+            "Without it, you answer them at the keyboard.",
+        ),
+    ] = None,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Hide live steps.")] = False,
     set_: SetOption = None,
 ) -> None:
@@ -191,7 +200,8 @@ def ask(
             profile=profile,
             dataset=dataset,
             variant=variant,
-            user=TerminalUser(console),
+            user=None if sim_intent else TerminalUser(console),
+            sim_intent=sim_intent,
             overrides=set_,
             sinks=sinks,
         )
@@ -228,6 +238,24 @@ def _print_result(out: api.AskRun) -> None:
     )
     trace = out.trace_path.relative_to(Path.cwd(), walk_up=True)
     console.print(f"[dim]trace: {trace}[/]", style=None if ok else "red")
+
+
+@app.command("sim-user")
+def sim_user(
+    clarifying_question: Annotated[str, typer.Argument(help="What the agent asks the user.")],
+    question: Annotated[str, typer.Option("--question", help="The user's original question.")],
+    intent: Annotated[str, typer.Option("--intent", help="What the user really meant.")],
+) -> None:
+    """Get one simulated-user reply, to check the simulator stays in character."""
+    try:
+        reply = api.simulate_reply(question, intent, clarifying_question)
+    except LLMError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+    console.print(f"[bold yellow]Agent asks:[/] {clarifying_question}")
+    console.print(f"[bold green]Simulated user:[/] {reply}")
+    if leaks := leak_signals(reply):
+        console.print(f"[red]Possible leak of schema/SQL detail: {', '.join(leaks)}[/]")
 
 
 @app.command("eval")

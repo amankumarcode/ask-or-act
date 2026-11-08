@@ -71,24 +71,28 @@ class Agent:
                 self._append(messages, {"role": "user", "content": NUDGE})
                 continue
 
-            for call in resp.tool_calls:
-                tool_result = self._run_tool(call.name, call.arguments, ctx)
-                result.steps.append(
-                    Step(
-                        index=len(result.steps),
-                        tool=call.name,
-                        arguments=call.arguments,
-                        output=tool_result.content,
-                        is_error=tool_result.is_error,
-                        latency_ms=tool_result.data.get("_latency_ms", 0.0),
+            try:
+                for call in resp.tool_calls:
+                    tool_result = self._run_tool(call.name, call.arguments, ctx)
+                    result.steps.append(
+                        Step(
+                            index=len(result.steps),
+                            tool=call.name,
+                            arguments=call.arguments,
+                            output=tool_result.content,
+                            is_error=tool_result.is_error,
+                            latency_ms=tool_result.data.get("_latency_ms", 0.0),
+                        )
                     )
-                )
-                self._append(
-                    messages,
-                    {"role": "tool", "tool_call_id": call.id, "content": tool_result.content},
-                )
-                if tool_result.final is not None:
-                    result.final = tool_result.final
+                    self._append(
+                        messages,
+                        {"role": "tool", "tool_call_id": call.id, "content": tool_result.content},
+                    )
+                    if tool_result.final is not None:
+                        result.final = tool_result.final
+            except LLMError as exc:  # a tool's own model call failed (e.g. the simulated user)
+                result.outcome, result.error = Outcome.ERROR, f"{call.name} failed: {exc}"
+                break
 
             if result.final is not None:
                 result.outcome = (

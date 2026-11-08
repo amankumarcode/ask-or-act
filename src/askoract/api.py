@@ -26,11 +26,11 @@ from askoract.db import Database
 from askoract.llm.base import LLMClient
 from askoract.llm.cache import ResponseCache
 from askoract.llm.client import LiteLLMClient
-from askoract.prompts import load_prompt, load_tool_descriptions
+from askoract.prompts import load_prompt, load_tool_descriptions, prompt_text
 from askoract.runs import Run, new_run
 from askoract.tools import TOOLS, Tool, ToolContext, ToolResult, Toolset
 from askoract.tracing.tracer import Sink, Tracer
-from askoract.users import NoUser, UserChannel
+from askoract.users import NoUser, SimulatedUser, UserChannel
 
 AGENT_PREFIX = "agent."
 
@@ -182,6 +182,26 @@ def build_agent(
     )
 
 
+def make_simulated_user(
+    original_question: str,
+    intent: str,
+    *,
+    settings: Settings | None = None,
+    tracer: Tracer | None = None,
+    llm: LLMClient | None = None,
+) -> SimulatedUser:
+    """An LLM user holding a hidden intent, on the model set in `simulated_user` config."""
+    settings = settings or get_settings()
+    cfg = settings.simulated_user
+    return SimulatedUser(
+        llm or make_llm(cfg.llm, settings=settings, tracer=tracer, role="simulated_user"),
+        original_question=original_question,
+        intent=intent,
+        prompt_template=prompt_text(settings, cfg.prompt),
+        tracer=tracer,
+    )
+
+
 @dataclass(frozen=True)
 class AskRun:
     result: AgentResult
@@ -196,12 +216,18 @@ def ask(
     dataset: str | None = None,
     variant: str = "pristine",
     user: UserChannel | None = None,
+    sim_intent: str | None = None,
     overrides: list[str] | None = None,
     sinks: list[Sink] | None = None,
     llm: LLMClient | None = None,
+    user_llm: LLMClient | None = None,
     settings: Settings | None = None,
 ) -> AskRun:
-    """Answer one question end to end, writing a trace to runs/<run_id>/traces/ask.jsonl."""
+    """Answer one question end to end, writing a trace to runs/<run_id>/traces/ask.jsonl.
+
+    Clarifying questions go to `user`, or to a simulated user holding `sim_intent`
+    when that is given, or nowhere (NoUser) when neither is.
+    """
     settings = settings or get_settings(overrides)
     prof = get_profile(profile, overrides, settings=settings)
     db = open_database(dataset, variant, settings)
@@ -209,10 +235,19 @@ def ask(
         settings,
         "ask",
         [prof],
-        extra={"question": question, "dataset": dataset or settings.dataset, "variant": variant},
+        extra={
+            "question": question,
+            "dataset": dataset or settings.dataset,
+            "variant": variant,
+            "sim_intent": sim_intent,
+        },
     )
     tracer = run.tracer("ask", sinks=sinks, profile=prof.name)
     try:
+        if sim_intent is not None:
+            user = make_simulated_user(
+                question, sim_intent, settings=settings, tracer=tracer, llm=user_llm
+            )
         agent = build_agent(prof, db, settings=settings, tracer=tracer, llm=llm)
         ctx = ToolContext(db=db, user=user or NoUser(), limits=prof.limits, tracer=tracer)
         result = agent.run(question, ctx)
@@ -220,3 +255,17 @@ def ask(
         tracer.close()
         db.close()
     return AskRun(result=result, run=run, trace_path=run.trace_path("ask"))
+
+
+def simulate_reply(
+    original_question: str,
+    intent: str,
+    clarifying_question: str,
+    *,
+    settings: Settings | None = None,
+    sinks: list[Sink] | None = None,
+) -> str:
+    """One simulated-user reply, outside any agent run. For checking the simulator by hand."""
+    tracer = Tracer(sinks)
+    user = make_simulated_user(original_question, intent, settings=settings, tracer=tracer)
+    return user.reply(clarifying_question)

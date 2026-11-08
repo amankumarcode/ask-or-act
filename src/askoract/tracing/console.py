@@ -44,5 +44,9 @@ class ConsoleSink:
                 if more > 0:
                     self.console.print(f"    [dim]… {more} more lines[/]")
 
+        elif event.type == "user_reply" and d.get("leak_signals"):
+            leaks = ", ".join(d["leak_signals"])
+            self.console.print(f"    [yellow]! simulated reply may leak schema detail: {leaks}[/]")
+
     def close(self) -> None:
         pass

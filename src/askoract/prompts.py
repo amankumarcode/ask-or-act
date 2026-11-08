@@ -24,6 +24,11 @@ def render(template: str, **values: Any) -> str:
     return Template(template).safe_substitute({k: str(v) for k, v in values.items()})
 
 
+def prompt_text(settings: Settings, name: str) -> str:
+    """The raw template, placeholders unfilled (for callers that fill them later)."""
+    return _path(settings, name, ".md").read_text()
+
+
 def load_prompt(settings: Settings, name: str, **values: Any) -> str:
     """e.g. load_prompt(settings, "agent/full_v1", dialect="sqlite")"""
     return render(_path(settings, name, ".md").read_text(), **values).strip()
