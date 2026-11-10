@@ -13,8 +13,8 @@ SPLIT_RATE = 0.15  # share of orders paid in two installments
 class AmountInCents(Trap):
     id = "amount_in_cents"
     summary = (
-        "Adds Payments(PaymentID, OrderID, Amount, Method, PaidAt) for every Shipped or "
-        "Returned order. Amount is an integer number of cents, and no comment says so. "
+        "Adds Payments(PaymentID, OrderID, Amount, Method, PaidAt) for every shipped "
+        "order. Amount is an integer number of cents, and no comment says so. "
         "About 15% of orders are paid in two installments."
     )
     correct_behavior = (
@@ -36,7 +36,7 @@ class AmountInCents(Trap):
             " CAST(ROUND((SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) + o.Freight) * 100)"
             " AS INTEGER)"
             ' FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID'
-            " WHERE o.Status IN ('Shipped', 'Returned')"
+            " WHERE o.Status = 'Shipped'"
             " GROUP BY o.OrderID ORDER BY o.OrderID"
         ).fetchall()
         rows = []
@@ -59,8 +59,8 @@ class AmountInCents(Trap):
         paid_cents, owed_dollars, non_int = conn.execute(
             "SELECT (SELECT SUM(Amount) FROM Payments),"
             ' (SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) FROM "Order Details" d'
-            "  JOIN Orders o ON o.OrderID = d.OrderID WHERE o.Status IN ('Shipped', 'Returned'))"
-            " + (SELECT SUM(Freight) FROM Orders WHERE Status IN ('Shipped', 'Returned')),"
+            "  JOIN Orders o ON o.OrderID = d.OrderID WHERE o.Status = 'Shipped')"
+            " + (SELECT SUM(Freight) FROM Orders WHERE Status = 'Shipped'),"
             " (SELECT COUNT(*) FROM Payments WHERE typeof(Amount) != 'integer')"
         ).fetchone()
         self.check(non_int == 0, "Amount must be stored as integers")

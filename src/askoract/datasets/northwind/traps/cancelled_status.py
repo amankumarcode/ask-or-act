@@ -9,14 +9,13 @@ from askoract.datasets.traps import Trap, register_trap
 class CancelledStatus(Trap):
     id = "cancelled_status"
     summary = (
-        "Adds Orders.Status (Shipped / Pending / Cancelled / Returned). About 8% of shipped "
-        "orders become Cancelled: their ShippedDate is cleared but their order lines remain."
+        "Adds Orders.Status (Shipped / Pending / Cancelled). About 8% of shipped orders "
+        "become Cancelled: their ShippedDate is cleared but their order lines remain."
     )
     correct_behavior = "Exclude Cancelled orders from sales, revenue, and order counts."
     comments = {"Orders": {"Status": "Order lifecycle status."}}
 
     CANCEL_RATE = 0.08
-    RETURN_RATE = 0.02
 
     def apply(self, conn: sqlite3.Connection, rng: random.Random) -> None:
         conn.execute("ALTER TABLE Orders ADD COLUMN Status TEXT NOT NULL DEFAULT 'Shipped'")
@@ -26,14 +25,10 @@ class CancelledStatus(Trap):
         ):
             if unshipped:
                 status = "Pending"
+            elif rng.random() < self.CANCEL_RATE:
+                status = "Cancelled"
             else:
-                r = rng.random()
-                if r < self.CANCEL_RATE:
-                    status = "Cancelled"
-                elif r < self.CANCEL_RATE + self.RETURN_RATE:
-                    status = "Returned"
-                else:
-                    continue
+                continue
             updates.append((status, order_id))
         conn.executemany("UPDATE Orders SET Status = ? WHERE OrderID = ?", updates)
         conn.execute("UPDATE Orders SET ShippedDate = NULL WHERE Status = 'Cancelled'")

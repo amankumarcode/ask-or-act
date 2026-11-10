@@ -14,6 +14,7 @@ from askoract.db.base import Database
 from askoract.eval.cases import TestCase
 from askoract.registry import Registry
 from askoract.tools.base import Tool
+from askoract.tracing.tracer import Tracer
 from askoract.users.base import UserChannel
 
 
@@ -31,7 +32,13 @@ class Benchmark(Protocol):
 
     def cases(self) -> Iterable[TestCase]: ...
 
-    def environment(self, case: TestCase) -> CaseEnv: ...
+    def environment(self, case: TestCase, tracer: Tracer) -> CaseEnv:
+        """Everything one case runs against. The caller closes `env.db` afterwards.
+
+        `tracer` is the case's tracer, so anything the environment calls (e.g. a simulated
+        user's model) lands in the same trace as the agent.
+        """
+        ...
 
 
 # Benchmark name -> factory taking (settings, **options) and returning a Benchmark.

@@ -5,14 +5,16 @@ and everything else patches the global settings, e.g.
     --set agent.llm.model=openrouter/openai/gpt-5  --set seed=7
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from askoract import datasets
+from askoract import datasets, factory
 from askoract.agent.loop import Agent
 from askoract.agent.types import AgentResult
+from askoract.benchmarks import YamlSuiteBenchmark, find_suites, load_suite
 from askoract.config import (
     AgentProfile,
     LLMConfig,
@@ -23,10 +25,13 @@ from askoract.config import (
 )
 from askoract.datasets import BuildReport, Dataset
 from askoract.db import Database
+from askoract.eval.cases import Suite
+from askoract.eval.runner import EvalRun
+from askoract.eval.runner import run_eval as _run_eval
+from askoract.eval.scorer import CaseScore
+from askoract.eval.validate import SuiteReport, validate_suite
 from askoract.llm.base import LLMClient
-from askoract.llm.cache import ResponseCache
-from askoract.llm.client import LiteLLMClient
-from askoract.prompts import load_prompt, load_tool_descriptions, prompt_text
+from askoract.llm.client import missing_credentials
 from askoract.runs import Run, new_run
 from askoract.tools import TOOLS, Tool, ToolContext, ToolResult, Toolset
 from askoract.tracing.tracer import Sink, Tracer
@@ -94,20 +99,9 @@ def build_toolset(
     settings: Settings | None = None,
     extra_tools: list[Tool] | None = None,
 ) -> Toolset:
-    """The profile's tools, with descriptions from its versioned file, plus any extra tools
-    a benchmark supplies (e.g. a knowledge-base lookup)."""
-    settings = settings or get_settings()
-    descriptions = load_tool_descriptions(
-        settings,
-        profile.tool_descriptions,
-        dialect=dialect,
-        max_rows=profile.limits.sql_max_rows,
-        max_clarifications=profile.limits.max_clarifications,
+    return factory.build_toolset(
+        profile, dialect, settings or get_settings(), extra_tools=extra_tools
     )
-    toolset = Toolset.from_names(profile.tools, descriptions)
-    for tool in extra_tools or []:
-        toolset.add(tool)
-    return toolset
 
 
 def run_tool(
@@ -134,25 +128,14 @@ def run_tool(
         db.close()
 
 
-_CACHES: dict[Path, ResponseCache] = {}
-
-
 def make_llm(
     config: LLMConfig,
     *,
     settings: Settings | None = None,
     tracer: Tracer | None = None,
     role: str = "agent",
-) -> LiteLLMClient:
-    """An LLM client wired to the shared response cache and the price overrides."""
-    settings = settings or get_settings()
-    cache = None
-    if settings.cache.enabled:
-        path = settings.cache.path
-        if path not in _CACHES:  # one connection per cache file per process
-            _CACHES[path] = ResponseCache(path)
-        cache = _CACHES[path]
-    return LiteLLMClient(config, cache=cache, prices=settings.prices, tracer=tracer, role=role)
+) -> LLMClient:
+    return factory.make_llm(config, settings or get_settings(), tracer=tracer, role=role)
 
 
 def build_agent(
@@ -164,21 +147,8 @@ def build_agent(
     llm: LLMClient | None = None,
     extra_tools: list[Tool] | None = None,
 ) -> Agent:
-    settings = settings or get_settings()
-    tracer = tracer or Tracer()
-    system_prompt = load_prompt(
-        settings,
-        profile.prompt,
-        dialect=db.dialect,
-        db_name=db.name,
-        max_clarifications=profile.limits.max_clarifications,
-    )
-    return Agent(
-        llm=llm or make_llm(profile.llm, settings=settings, tracer=tracer),
-        toolset=build_toolset(profile, db.dialect, settings=settings, extra_tools=extra_tools),
-        system_prompt=system_prompt,
-        limits=profile.limits,
-        tracer=tracer,
+    return factory.build_agent(
+        profile, db, settings or get_settings(), tracer=tracer, llm=llm, extra_tools=extra_tools
     )
 
 
@@ -190,15 +160,8 @@ def make_simulated_user(
     tracer: Tracer | None = None,
     llm: LLMClient | None = None,
 ) -> SimulatedUser:
-    """An LLM user holding a hidden intent, on the model set in `simulated_user` config."""
-    settings = settings or get_settings()
-    cfg = settings.simulated_user
-    return SimulatedUser(
-        llm or make_llm(cfg.llm, settings=settings, tracer=tracer, role="simulated_user"),
-        original_question=original_question,
-        intent=intent,
-        prompt_template=prompt_text(settings, cfg.prompt),
-        tracer=tracer,
+    return factory.make_simulated_user(
+        original_question, intent, settings or get_settings(), tracer=tracer, llm=llm
     )
 
 
@@ -269,3 +232,61 @@ def simulate_reply(
     tracer = Tracer(sinks)
     user = make_simulated_user(original_question, intent, settings=settings, tracer=tracer)
     return user.reply(clarifying_question)
+
+
+def list_suites(settings: Settings | None = None) -> list[str]:
+    return list(find_suites(settings or get_settings()))
+
+
+def get_suite(name: str, settings: Settings | None = None) -> Suite:
+    return load_suite(settings or get_settings(), name)
+
+
+def validate_suites(
+    names: list[str] | None = None, settings: Settings | None = None
+) -> list[SuiteReport]:
+    """Run every gold query of the named suites (all suites when none are named)."""
+    settings = settings or get_settings()
+    reports = []
+    for name in names or list_suites(settings):
+        bench = YamlSuiteBenchmark(settings, load_suite(settings, name))
+        reports.append(validate_suite(bench.suite, bench.open_db))
+    return reports
+
+
+def check_credentials(profiles: list[AgentProfile], settings: Settings) -> dict[str, list[str]]:
+    """Model -> missing environment variables, for every model an eval would call."""
+    models = {p.llm.model for p in profiles} | {settings.simulated_user.llm.model}
+    return {m: missing for m in sorted(models) if (missing := missing_credentials(m))}
+
+
+def run_eval(
+    profiles: list[str] | None = None,
+    suites: list[str] | None = None,
+    *,
+    limit: int | None = None,
+    case_ids: list[str] | None = None,
+    overrides: list[str] | None = None,
+    sinks: list[Sink] | None = None,
+    on_score: Callable[[CaseScore, int, int], None] | None = None,
+    llm_factory: Callable | None = None,
+    user_llm: LLMClient | None = None,
+    settings: Settings | None = None,
+) -> EvalRun:
+    """Run suites for profiles; scores go to runs/<id>/results.jsonl, traces alongside."""
+    settings = settings or get_settings(overrides)
+    profs = [get_profile(p, overrides, settings=settings) for p in (profiles or [None])]
+    benches = [
+        YamlSuiteBenchmark(settings, load_suite(settings, name), user_llm=user_llm)
+        for name in (suites or list_suites(settings))
+    ]
+    return _run_eval(
+        settings,
+        profs,
+        benches,
+        limit=limit,
+        case_ids=case_ids,
+        llm_factory=llm_factory,
+        sinks=sinks,
+        on_score=on_score,
+    )

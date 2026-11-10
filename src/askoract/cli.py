@@ -1,6 +1,7 @@
 """Command-line interface: a thin shell over askoract.api."""
 
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -14,6 +15,7 @@ from rich.table import Table
 from askoract import __version__, api
 from askoract.agent.types import Outcome
 from askoract.datasets.sqlite_file import DatasetBuildError
+from askoract.eval.scorer import CaseScore
 from askoract.llm.client import LLMError
 from askoract.tracing.console import ConsoleSink
 from askoract.users import TerminalUser, leak_signals
@@ -29,6 +31,8 @@ db_app = typer.Typer(help="Inspect built databases.", no_args_is_help=True)
 app.add_typer(db_app, name="db")
 tool_app = typer.Typer(help="List agent tools or call one by hand.", no_args_is_help=True)
 app.add_typer(tool_app, name="tool")
+suite_app = typer.Typer(help="Inspect and validate test suites.", no_args_is_help=True)
+app.add_typer(suite_app, name="suite")
 
 console = Console()
 
@@ -258,10 +262,120 @@ def sim_user(
         console.print(f"[red]Possible leak of schema/SQL detail: {', '.join(leaks)}[/]")
 
 
+@suite_app.command("list")
+def suite_list() -> None:
+    """List test suites with their label and trap mix."""
+    settings = api.get_settings()
+    table = Table("suite", "dataset", "cases", "clear", "ambiguous", "unanswerable", "traps")
+    for name in api.list_suites(settings):
+        suite = api.get_suite(name, settings)
+        labels = Counter(c.label.value for c in suite.cases)
+        traps = len({c.trap for c in suite.cases if c.trap})
+        table.add_row(
+            name,
+            suite.dataset,
+            str(len(suite.cases)),
+            str(labels["clear"]),
+            str(labels["ambiguous"]),
+            str(labels["unanswerable"]),
+            str(traps),
+        )
+    console.print(table)
+
+
+@suite_app.command("validate")
+def suite_validate(
+    names: Annotated[list[str] | None, typer.Argument(help="Suites (default: all).")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show every case.")] = False,
+) -> None:
+    """Run every gold query and check each case is well formed. Exit 1 on any error."""
+    with console.status("Running gold SQL..."):
+        reports = api.validate_suites(names)
+    failed = False
+    for report in reports:
+        table = Table("case", "label", "trap", "gold rows", "target result", "status")
+        for c in report.checks:
+            if c.ok and not verbose:
+                continue
+            rows = ", ".join(f"{k}:{v}" for k, v in c.gold_rows.items()) or "-"
+            status = "[green]ok[/]" if c.ok else "[red]" + "; ".join(c.errors) + "[/]"
+            table.add_row(c.case_id, c.label, c.trap or "-", rows, c.preview, status)
+        n_bad = sum(not c.ok for c in report.checks)
+        failed |= n_bad > 0
+        labels = ", ".join(f"{k} {v}" for k, v in sorted(report.label_counts.items()))
+        colour = "green" if n_bad == 0 else "red"
+        console.rule(f"[bold]{report.suite}[/]  {len(report.checks)} cases ({labels})")
+        if table.row_count:
+            console.print(table)
+        console.print(f"[{colour}]{len(report.checks) - n_bad} valid, {n_bad} with errors[/]")
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command("eval")
-def eval_(profile: Annotated[list[str] | None, typer.Option("--profile", "-p")] = None) -> None:
-    """Run test suites for one or more profiles and write the results table."""
-    _not_yet(6)
+def eval_(
+    profile: Annotated[
+        list[str] | None, typer.Option("--profile", "-p", help="Profiles (repeatable).")
+    ] = None,
+    suite: Annotated[
+        list[str] | None, typer.Option("--suite", "-s", help="Suites (default: all).")
+    ] = None,
+    limit: Annotated[int | None, typer.Option(help="First N cases of each suite.")] = None,
+    case: Annotated[
+        list[str] | None, typer.Option("--case", "-c", help="Only these case ids.")
+    ] = None,
+    set_: SetOption = None,
+) -> None:
+    """Run test suites for one or more profiles and score every case."""
+    settings = api.get_settings(set_)
+    profs = [api.get_profile(p, set_, settings=settings) for p in (profile or [None])]
+    if missing := api.check_credentials(profs, settings):
+        for model, keys in missing.items():
+            console.print(f"[red]{model} needs {', '.join(keys)}.[/]")
+        console.print("Add the keys to .env (see .env.example) and rerun.")
+        raise typer.Exit(code=2)
+
+    def progress(score: CaseScore, n: int, total: int) -> None:
+        mark = "[green]✓[/]" if score.correct else "[red]✗[/]"
+        asked = " [yellow]asked[/]" if score.asked else ""
+        why = "" if score.correct else f"  [dim]{score.reason}[/]"
+        console.print(
+            f"[dim]{n:>3}/{total}[/] {mark} {score.profile:<10} {score.case_id:<6} "
+            f"{score.label:<12}{asked}  [dim]{score.tool_calls} tools ${score.cost_usd:.3f}[/]{why}"
+        )
+
+    out = api.run_eval(
+        [p.name for p in profs],
+        suite,
+        limit=limit,
+        case_ids=case,
+        overrides=set_,
+        on_score=progress,
+        settings=settings,
+    )
+    _print_eval_summary(out)
+
+
+def _print_eval_summary(out: "api.EvalRun") -> None:
+    table = Table("profile", "cases", "correct", "accuracy", "asked", "cost", "billed")
+    by_profile: dict[str, list[CaseScore]] = {}
+    for s in out.scores:
+        by_profile.setdefault(s.profile, []).append(s)
+    for name, scores in by_profile.items():
+        n = len(scores)
+        right = sum(s.correct for s in scores)
+        table.add_row(
+            name,
+            str(n),
+            str(right),
+            f"{right / n:.0%}" if n else "-",
+            str(sum(s.asked for s in scores)),
+            f"${sum(s.cost_usd for s in scores):.3f}",
+            f"${sum(s.billed_usd for s in scores):.3f}",
+        )
+    console.print()
+    console.print(table)
+    console.print(f"[dim]results: {out.run.dir / 'results.jsonl'}[/]")
 
 
 @app.command()

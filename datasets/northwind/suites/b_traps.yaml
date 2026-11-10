@@ -1,0 +1,447 @@
+# Suite B: 30 questions on the trap variant. Each one targets an injected trap.
+# Run `askoract db traps` for what each trap injects and what correct behaviour looks like.
+#
+# Conventions in gold SQL:
+#   valid orders  = Status != 'Cancelled' (cancelled orders keep their order lines)
+#   Payments.Amount is in cents; divide by 100
+#   OrderShipments has several rows per order (and some duplicate Delivered rows)
+#   "ordered recently" = a non-cancelled order in the 12 months up to MAX(OrderDate)
+
+name: northwind_b
+dataset: northwind
+default_variant: traps
+description: Injected traps, one trap per case.
+
+cases:
+  # ------------------------------------------------------ cancelled_status (6)
+  - id: B-001
+    label: clear
+    trap: cancelled_status
+    question: >-
+      What was total sales revenue in 2022, after discounts and excluding freight?
+    interpretations:
+      - id: valid_orders
+        intent: Net product revenue of 2022 orders, excluding cancelled orders.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2022' AND o.Status != 'Cancelled'
+    naive_sql: |
+      SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+      FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+      WHERE strftime('%Y', o.OrderDate) = '2022'
+
+  - id: B-002
+    label: clear
+    trap: cancelled_status
+    question: >-
+      What was sales revenue for each product category in 2021, after discounts and
+      excluding freight? Return the category name and the revenue.
+    interpretations:
+      - id: valid_orders
+        intent: Net product revenue per category on 2021 orders, excluding cancelled orders.
+        gold_sql: |
+          SELECT c.CategoryName, SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE strftime('%Y', o.OrderDate) = '2021' AND o.Status != 'Cancelled'
+          GROUP BY c.CategoryID
+    naive_sql: |
+      SELECT c.CategoryName, SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+      FROM "Order Details" d
+      JOIN Orders o ON o.OrderID = d.OrderID
+      JOIN Products p ON p.ProductID = d.ProductID
+      JOIN Categories c ON c.CategoryID = p.CategoryID
+      WHERE strftime('%Y', o.OrderDate) = '2021'
+      GROUP BY c.CategoryID
+
+  - id: B-003
+    label: clear
+    trap: cancelled_status
+    question: How many units of Chai did we sell in 2023?
+    interpretations:
+      - id: valid_orders
+        intent: Chai units on 2023 orders, excluding cancelled orders.
+        gold_sql: |
+          SELECT SUM(d.Quantity)
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          WHERE p.ProductName = 'Chai' AND strftime('%Y', o.OrderDate) = '2023'
+            AND o.Status != 'Cancelled'
+    naive_sql: |
+      SELECT SUM(d.Quantity)
+      FROM "Order Details" d
+      JOIN Orders o ON o.OrderID = d.OrderID
+      JOIN Products p ON p.ProductID = d.ProductID
+      WHERE p.ProductName = 'Chai' AND strftime('%Y', o.OrderDate) = '2023'
+
+  - id: B-004
+    label: clear
+    trap: cancelled_status
+    question: >-
+      What was the average order value in 2019, counting product value after discounts and
+      excluding freight?
+    interpretations:
+      - id: valid_orders
+        intent: Mean net product value per 2019 order, excluding cancelled orders.
+        gold_sql: |
+          SELECT AVG(v) FROM (
+            SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) AS v
+            FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID
+            WHERE strftime('%Y', o.OrderDate) = '2019' AND o.Status != 'Cancelled'
+            GROUP BY o.OrderID)
+    naive_sql: |
+      SELECT AVG(v) FROM (
+        SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) AS v
+        FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID
+        WHERE strftime('%Y', o.OrderDate) = '2019' GROUP BY o.OrderID)
+
+  - id: B-005
+    label: clear
+    trap: cancelled_status
+    question: >-
+      Who were our top 5 customers by sales revenue in 2022 (after discounts, excluding
+      freight)? Give their company names.
+    interpretations:
+      - id: valid_orders
+        intent: Five customers with the most net product revenue on 2022 orders, excluding cancelled orders.
+        gold_sql: |
+          SELECT c.CompanyName FROM Orders o
+          JOIN Customers c ON c.CustomerID = o.CustomerID
+          JOIN "Order Details" d ON d.OrderID = o.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2022' AND o.Status != 'Cancelled'
+          GROUP BY c.CustomerID
+          ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC LIMIT 5
+    naive_sql: |
+      SELECT c.CompanyName FROM Orders o
+      JOIN Customers c ON c.CustomerID = o.CustomerID
+      JOIN "Order Details" d ON d.OrderID = o.OrderID
+      WHERE strftime('%Y', o.OrderDate) = '2022'
+      GROUP BY c.CustomerID
+      ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC LIMIT 5
+
+  - id: B-006
+    label: ambiguous
+    trap: cancelled_status
+    question: How many orders did customers place in 2022?
+    hidden_intent: excluding_cancelled
+    interpretations:
+      - id: excluding_cancelled
+        intent: Orders placed in 2022 that went ahead. Cancelled orders don't count.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE strftime('%Y', OrderDate) = '2022' AND Status != 'Cancelled'
+      - id: including_cancelled
+        intent: Every order placed in 2022, including ones later cancelled.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE strftime('%Y', OrderDate) = '2022'
+
+  # ------------------------------------------------------ legacy_customers (5)
+  - id: B-007
+    label: clear
+    trap: legacy_customers
+    question: How many customer accounts do we have?
+    interpretations:
+      - id: customers
+        intent: Every row of the maintained customer table.
+        gold_sql: SELECT COUNT(*) FROM Customers
+    naive_sql: SELECT COUNT(*) FROM CustomerMaster
+
+  - id: B-008
+    label: clear
+    trap: legacy_customers
+    question: How many customer accounts are there in the UK?
+    interpretations:
+      - id: customers
+        intent: Current customer accounts with a UK address.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE Country = 'UK'
+    naive_sql: SELECT COUNT(*) FROM CustomerMaster WHERE Country = 'UK'
+
+  - id: B-009
+    label: clear
+    trap: legacy_customers
+    question: List the company names of our customers in Spain.
+    interpretations:
+      - id: customers
+        intent: Current customer accounts in Spain.
+        gold_sql: SELECT CompanyName FROM Customers WHERE Country = 'Spain'
+    naive_sql: SELECT CompanyName FROM CustomerMaster WHERE Country = 'Spain'
+
+  - id: B-010
+    label: clear
+    trap: legacy_customers
+    question: >-
+      How many customers do we have in each country? Return the country and the count;
+      customers with no country recorded form their own group.
+    interpretations:
+      - id: customers
+        intent: Current customer accounts per country, including accounts with no country.
+        gold_sql: SELECT Country, COUNT(*) FROM Customers GROUP BY Country
+    naive_sql: SELECT Country, COUNT(*) FROM CustomerMaster GROUP BY Country
+
+  - id: B-011
+    label: clear
+    trap: legacy_customers
+    question: How many of our customers are based in London?
+    interpretations:
+      - id: customers
+        intent: Current customer accounts whose city is London.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE City = 'London'
+    naive_sql: SELECT COUNT(*) FROM CustomerMaster WHERE City = 'London'
+
+  # ------------------------------------------------------- amount_in_cents (5)
+  - id: B-012
+    label: clear
+    trap: amount_in_cents
+    question: How much money did we receive in customer payments in 2022?
+    interpretations:
+      - id: dollars
+        intent: Sum of payments received in 2022, in currency units.
+        gold_sql: |
+          SELECT SUM(Amount) / 100.0 FROM Payments WHERE strftime('%Y', PaidAt) = '2022'
+    naive_sql: SELECT SUM(Amount) FROM Payments WHERE strftime('%Y', PaidAt) = '2022'
+
+  - id: B-013
+    label: clear
+    trap: amount_in_cents
+    question: What is the average amount of a single customer payment?
+    interpretations:
+      - id: dollars
+        intent: Mean payment amount, in currency units, over all payment records.
+        gold_sql: SELECT AVG(Amount) / 100.0 FROM Payments
+    naive_sql: SELECT AVG(Amount) FROM Payments
+
+  - id: B-014
+    label: clear
+    trap: amount_in_cents
+    question: What was the largest single payment we have received?
+    interpretations:
+      - id: dollars
+        intent: The largest payment amount, in currency units.
+        gold_sql: SELECT MAX(Amount) / 100.0 FROM Payments
+    naive_sql: SELECT MAX(Amount) FROM Payments
+
+  - id: B-015
+    label: clear
+    trap: amount_in_cents
+    question: >-
+      How much did we receive through each payment method in 2021? Return the method and
+      the total.
+    interpretations:
+      - id: dollars
+        intent: Sum of 2021 payments per method, in currency units.
+        gold_sql: |
+          SELECT Method, SUM(Amount) / 100.0 FROM Payments
+          WHERE strftime('%Y', PaidAt) = '2021' GROUP BY Method
+    naive_sql: |
+      SELECT Method, SUM(Amount) FROM Payments
+      WHERE strftime('%Y', PaidAt) = '2021' GROUP BY Method
+
+  - id: B-016
+    label: clear
+    trap: amount_in_cents
+    question: How much has Alfreds Futterkiste paid us in total?
+    interpretations:
+      - id: dollars
+        intent: All payments against that customer's orders, in currency units.
+        gold_sql: |
+          SELECT SUM(p.Amount) / 100.0 FROM Payments p
+          JOIN Orders o ON o.OrderID = p.OrderID
+          JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE c.CompanyName = 'Alfreds Futterkiste'
+    naive_sql: |
+      SELECT SUM(p.Amount) FROM Payments p
+      JOIN Orders o ON o.OrderID = p.OrderID
+      JOIN Customers c ON c.CustomerID = o.CustomerID
+      WHERE c.CompanyName = 'Alfreds Futterkiste'
+
+  # -------------------------------------------------------- duplicate_join (5)
+  - id: B-017
+    label: clear
+    trap: duplicate_join
+    question: How many orders were delivered in 2022?
+    interpretations:
+      - id: distinct_orders
+        intent: Distinct orders with a delivery event in 2022.
+        gold_sql: |
+          SELECT COUNT(DISTINCT OrderID) FROM OrderShipments
+          WHERE Status = 'Delivered' AND strftime('%Y', EventAt) = '2022'
+    naive_sql: |
+      SELECT COUNT(*) FROM OrderShipments
+      WHERE Status = 'Delivered' AND strftime('%Y', EventAt) = '2022'
+
+  - id: B-018
+    label: clear
+    trap: duplicate_join
+    question: How many orders did Federal Shipping deliver in 2021?
+    interpretations:
+      - id: distinct_orders
+        intent: Distinct orders delivered by Federal Shipping in 2021.
+        gold_sql: |
+          SELECT COUNT(DISTINCT OrderID) FROM OrderShipments
+          WHERE Status = 'Delivered' AND Carrier = 'Federal Shipping'
+            AND strftime('%Y', EventAt) = '2021'
+    naive_sql: |
+      SELECT COUNT(*) FROM OrderShipments
+      WHERE Status = 'Delivered' AND Carrier = 'Federal Shipping'
+        AND strftime('%Y', EventAt) = '2021'
+
+  - id: B-019
+    label: clear
+    trap: duplicate_join
+    question: What was the total freight charged on orders that were delivered in 2022?
+    interpretations:
+      - id: distinct_orders
+        intent: Freight summed once per order delivered in 2022.
+        gold_sql: |
+          SELECT SUM(Freight) FROM Orders WHERE OrderID IN (
+            SELECT OrderID FROM OrderShipments
+            WHERE Status = 'Delivered' AND strftime('%Y', EventAt) = '2022')
+    naive_sql: |
+      SELECT SUM(o.Freight) FROM Orders o JOIN OrderShipments s ON s.OrderID = o.OrderID
+      WHERE s.Status = 'Delivered' AND strftime('%Y', s.EventAt) = '2022'
+
+  - id: B-020
+    label: clear
+    trap: duplicate_join
+    question: >-
+      What was the sales revenue (after discounts, excluding freight) of orders delivered in
+      2023?
+    interpretations:
+      - id: distinct_orders
+        intent: Net product revenue of orders with a 2023 delivery, each order counted once.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) FROM "Order Details" d
+          WHERE d.OrderID IN (
+            SELECT OrderID FROM OrderShipments
+            WHERE Status = 'Delivered' AND strftime('%Y', EventAt) = '2023')
+    naive_sql: |
+      SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+      FROM "Order Details" d JOIN OrderShipments s ON s.OrderID = d.OrderID
+      WHERE s.Status = 'Delivered' AND strftime('%Y', s.EventAt) = '2023'
+
+  - id: B-021
+    label: clear
+    trap: duplicate_join
+    question: >-
+      How many orders did each carrier handle in 2023, based on shipment tracking? Return the
+      carrier and the number of orders.
+    interpretations:
+      - id: distinct_orders
+        intent: Distinct orders per carrier with tracking events in 2023.
+        gold_sql: |
+          SELECT Carrier, COUNT(DISTINCT OrderID) FROM OrderShipments
+          WHERE strftime('%Y', EventAt) = '2023' GROUP BY Carrier
+    naive_sql: |
+      SELECT Carrier, COUNT(*) FROM OrderShipments
+      WHERE strftime('%Y', EventAt) = '2023' GROUP BY Carrier
+
+  # ------------------------------------------------------- active_customer (5)
+  - id: B-022
+    label: ambiguous
+    trap: active_customer
+    question: How many active customers do we have?
+    hidden_intent: flag
+    interpretations:
+      - id: flag
+        intent: Customers marked active in the account system by Sales Ops.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE IsActive = 1
+      - id: recent_orders
+        intent: Customers who placed a (non-cancelled) order in the last 12 months of the data.
+        gold_sql: |
+          SELECT COUNT(DISTINCT CustomerID) FROM Orders
+          WHERE Status != 'Cancelled'
+            AND OrderDate > datetime((SELECT MAX(OrderDate) FROM Orders), '-12 months')
+
+  - id: B-023
+    label: ambiguous
+    trap: active_customer
+    question: How many active customers do we have in Germany?
+    hidden_intent: recent_orders
+    interpretations:
+      - id: recent_orders
+        intent: German customers who placed a (non-cancelled) order in the last 12 months of the data.
+        gold_sql: |
+          SELECT COUNT(DISTINCT o.CustomerID) FROM Orders o
+          JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE c.Country = 'Germany' AND o.Status != 'Cancelled'
+            AND o.OrderDate > datetime((SELECT MAX(OrderDate) FROM Orders), '-12 months')
+      - id: flag
+        intent: German customers marked active in the account system.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE IsActive = 1 AND Country = 'Germany'
+
+  - id: B-024
+    label: ambiguous
+    trap: active_customer
+    question: List the company names of our active customers in the UK.
+    hidden_intent: flag
+    interpretations:
+      - id: flag
+        intent: UK customers marked active in the account system.
+        gold_sql: SELECT CompanyName FROM Customers WHERE IsActive = 1 AND Country = 'UK'
+      - id: recent_orders
+        intent: UK customers who placed a (non-cancelled) order in the last 12 months of the data.
+        gold_sql: |
+          SELECT DISTINCT c.CompanyName FROM Orders o
+          JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE c.Country = 'UK' AND o.Status != 'Cancelled'
+            AND o.OrderDate > datetime((SELECT MAX(OrderDate) FROM Orders), '-12 months')
+
+  - id: B-025
+    label: ambiguous
+    trap: active_customer
+    question: How many orders did our active customers place in 2023?
+    hidden_intent: flag
+    interpretations:
+      - id: flag
+        intent: Non-cancelled 2023 orders from customers marked active in the account system.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders o JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE c.IsActive = 1 AND strftime('%Y', o.OrderDate) = '2023' AND o.Status != 'Cancelled'
+      - id: recent_orders
+        intent: Non-cancelled 2023 orders from customers who ordered in the last 12 months of the data.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE strftime('%Y', OrderDate) = '2023' AND Status != 'Cancelled'
+            AND CustomerID IN (
+              SELECT CustomerID FROM Orders WHERE Status != 'Cancelled'
+                AND OrderDate > datetime((SELECT MAX(OrderDate) FROM Orders), '-12 months'))
+
+  - id: B-026
+    label: ambiguous
+    trap: active_customer
+    question: How many inactive customers do we have?
+    hidden_intent: recent_orders
+    interpretations:
+      - id: recent_orders
+        intent: Customers with no (non-cancelled) order in the last 12 months of the data.
+        gold_sql: |
+          SELECT COUNT(*) FROM Customers WHERE CustomerID NOT IN (
+            SELECT CustomerID FROM Orders WHERE Status != 'Cancelled'
+              AND OrderDate > datetime((SELECT MAX(OrderDate) FROM Orders), '-12 months'))
+      - id: flag
+        intent: Customers marked inactive in the account system.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE IsActive = 0
+
+  # ---------------------------------------------------------- unanswerable (4)
+  - id: B-027
+    label: unanswerable
+    question: How much did we refund to customers in 2022?
+    reason: Payments records only money received; there is no refund data.
+
+  - id: B-028
+    label: unanswerable
+    question: Which payment method costs us the most in processing fees?
+    reason: Payments has no fee data.
+
+  - id: B-029
+    label: unanswerable
+    question: What is the average customer rating of each carrier's deliveries?
+    reason: There are no ratings or feedback; OrderShipments holds tracking events only.
+
+  - id: B-030
+    label: unanswerable
+    question: Which marketing campaign brought in the most new customers this year?
+    reason: There is no campaign or acquisition-source data.

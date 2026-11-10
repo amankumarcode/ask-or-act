@@ -29,6 +29,14 @@ class LLMError(RuntimeError):
     """A failed LLM call, with a message fit for the CLI."""
 
 
+def missing_credentials(model: str) -> list[str]:
+    """Environment variables `model` needs that are not set (empty if it is ready to call)."""
+    import litellm
+
+    env = litellm.validate_environment(model)
+    return [] if env.get("keys_in_environment", True) else list(env.get("missing_keys", []))
+
+
 def _supports_prompt_caching(model: str) -> bool:
     return model.startswith(("anthropic/", "claude-"))
 
@@ -170,11 +178,10 @@ class LiteLLMClient:
         import litellm  # deferred: importing litellm takes about a second
 
         completion = self._completion_fn or litellm.completion
-        if self._completion_fn is None:
-            env = litellm.validate_environment(self.model)
-            if not env.get("keys_in_environment", True):
-                missing = ", ".join(env.get("missing_keys", [])) or "an API key"
-                raise LLMError(f"{self.model} needs {missing}. Add it to .env (see .env.example).")
+        if self._completion_fn is None and (missing := missing_credentials(self.model)):
+            raise LLMError(
+                f"{self.model} needs {', '.join(missing)}. Add it to .env (see .env.example)."
+            )
         start = time.perf_counter()
         try:
             raw = completion(

@@ -13,7 +13,7 @@ class DuplicateJoin(Trap):
     id = "duplicate_join"
     summary = (
         "Adds OrderShipments, a tracking-event table with several rows per shipped order "
-        "(Picked, Shipped, 1-3 InTransit scans, Delivered, Returned). About 6% of orders also "
+        "(Picked, Shipped, 1-3 InTransit scans, Delivered). About 6% of orders also "
         "have a duplicate Delivered event caused by a sync glitch."
     )
     correct_behavior = (
@@ -31,12 +31,12 @@ class DuplicateJoin(Trap):
         )
         last_ship = parse_ts(conn.execute("SELECT MAX(ShippedDate) FROM Orders").fetchone()[0])
         shipped = conn.execute(
-            "SELECT o.OrderID, o.ShippedDate, s.CompanyName, o.Status FROM Orders o"
+            "SELECT o.OrderID, o.ShippedDate, s.CompanyName FROM Orders o"
             " JOIN Shippers s ON s.ShipperID = o.ShipVia"
             " WHERE o.ShippedDate IS NOT NULL ORDER BY o.OrderID"
         ).fetchall()
         rows = []
-        for order_id, shipped_at, carrier, status in shipped:
+        for order_id, shipped_at, carrier in shipped:
             t = parse_ts(shipped_at)
             events = [
                 ("Picked", t - timedelta(hours=rng.randint(4, 30))),
@@ -49,8 +49,6 @@ class DuplicateJoin(Trap):
                 events.append(("Delivered", delivered))
                 if rng.random() < DUPLICATE_RATE:
                     events.append(("Delivered", delivered))
-                if status == "Returned":
-                    events.append(("Returned", delivered + timedelta(days=rng.randint(3, 20))))
             rows.extend((order_id, s, ts.strftime(TS_FORMAT), carrier) for s, ts in events)
         conn.executemany(
             "INSERT INTO OrderShipments (OrderID, Status, EventAt, Carrier) VALUES (?, ?, ?, ?)",

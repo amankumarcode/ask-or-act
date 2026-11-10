@@ -1,0 +1,771 @@
+# Suite A: 60 questions on pristine Northwind (no injected traps).
+#
+# Ambiguous cases target Northwind's natural ambiguity. Every gold query is run by
+# `askoract suite validate`; ambiguous interpretations must give different results,
+# and a naive_sql must give a different result from the gold.
+#
+# Conventions in gold SQL:
+#   net revenue   = UnitPrice * Quantity * (1 - Discount), freight excluded
+#   gross revenue = UnitPrice * Quantity
+#   year filter   = strftime('%Y', OrderDate) = 'YYYY' (works for both date formats)
+#   "latest date in the data" = MAX(OrderDate) = 2023-10-28; discounts exist only in 2016-2018.
+
+name: northwind_a
+dataset: northwind
+default_variant: pristine
+description: Natural ambiguity and pitfalls of Northwind, no injected traps.
+
+cases:
+  # ---------------------------------------------------------------- clear (30)
+  - id: A-001
+    label: clear
+    question: How many customers are there in total?
+    interpretations:
+      - id: all
+        intent: Count every customer record.
+        gold_sql: SELECT COUNT(*) FROM Customers
+
+  - id: A-002
+    label: clear
+    question: How many customers are located in Germany?
+    interpretations:
+      - id: customer_country
+        intent: Customers whose own address is in Germany.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE Country = 'Germany'
+
+  - id: A-003
+    label: clear
+    question: How many products have been discontinued?
+    interpretations:
+      - id: discontinued
+        intent: Products marked as discontinued.
+        gold_sql: SELECT COUNT(*) FROM Products WHERE Discontinued = '1'
+
+  - id: A-004
+    label: clear
+    question: How many products are in each category? Return the category name and the count.
+    interpretations:
+      - id: per_category
+        intent: Number of products per category.
+        gold_sql: |
+          SELECT c.CategoryName, COUNT(*)
+          FROM Products p JOIN Categories c ON c.CategoryID = p.CategoryID
+          GROUP BY c.CategoryName
+
+  - id: A-005
+    label: clear
+    trap: ties
+    question: Which suppliers offer the most products? Include ties.
+    interpretations:
+      - id: max_products
+        intent: Every supplier tied for the highest number of products.
+        gold_sql: |
+          SELECT s.CompanyName
+          FROM Suppliers s JOIN Products p ON p.SupplierID = s.SupplierID
+          GROUP BY s.SupplierID
+          HAVING COUNT(*) = (SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM Products GROUP BY SupplierID))
+    naive_sql: |
+      SELECT s.CompanyName FROM Suppliers s JOIN Products p ON p.SupplierID = s.SupplierID
+      GROUP BY s.SupplierID ORDER BY COUNT(*) DESC LIMIT 1
+
+  - id: A-006
+    label: clear
+    question: List the last names of the employees who report to Steven Buchanan.
+    interpretations:
+      - id: direct_reports
+        intent: Employees whose manager is Steven Buchanan.
+        gold_sql: |
+          SELECT e.LastName FROM Employees e
+          JOIN Employees m ON m.EmployeeID = e.ReportsTo
+          WHERE m.FirstName = 'Steven' AND m.LastName = 'Buchanan'
+
+  - id: A-007
+    label: clear
+    question: How many orders were placed in 2019?
+    interpretations:
+      - id: orders_2019
+        intent: Orders with an order date in 2019.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE strftime('%Y', OrderDate) = '2019'
+
+  - id: A-008
+    label: clear
+    question: How many orders were placed in each year? Return the year and the count, in year order.
+    compare: {ordered: true}
+    interpretations:
+      - id: per_year
+        intent: Order count per calendar year of the order date.
+        gold_sql: |
+          SELECT strftime('%Y', OrderDate) AS yr, COUNT(*) FROM Orders GROUP BY yr ORDER BY yr
+
+  - id: A-009
+    label: clear
+    question: How many units of Chai were sold in 2020?
+    interpretations:
+      - id: units
+        intent: Total quantity of Chai on orders placed in 2020.
+        gold_sql: |
+          SELECT SUM(d.Quantity)
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          WHERE p.ProductName = 'Chai' AND strftime('%Y', o.OrderDate) = '2020'
+
+  - id: A-010
+    label: clear
+    question: >-
+      What was total revenue in 2017, calculated as unit price times quantity after
+      discounts, excluding freight?
+    interpretations:
+      - id: net
+        intent: Net product revenue for orders placed in 2017.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2017'
+    naive_sql: |
+      SELECT SUM(d.UnitPrice * d.Quantity) FROM "Order Details" d
+      JOIN Orders o ON o.OrderID = d.OrderID WHERE strftime('%Y', o.OrderDate) = '2017'
+
+  - id: A-011
+    label: clear
+    question: What was the total freight charged on orders placed in 2021?
+    interpretations:
+      - id: freight
+        intent: Sum of freight over orders placed in 2021.
+        gold_sql: SELECT SUM(Freight) FROM Orders WHERE strftime('%Y', OrderDate) = '2021'
+
+  - id: A-012
+    label: clear
+    question: Which shipper handled the most orders placed in 2022?
+    interpretations:
+      - id: top_shipper
+        intent: Shipper with the most 2022 orders.
+        gold_sql: |
+          SELECT s.CompanyName FROM Orders o JOIN Shippers s ON s.ShipperID = o.ShipVia
+          WHERE strftime('%Y', o.OrderDate) = '2022'
+          GROUP BY s.ShipperID ORDER BY COUNT(*) DESC LIMIT 1
+
+  - id: A-013
+    label: clear
+    question: >-
+      For each shipper, what is the average freight per order across all orders assigned to
+      it? Return the shipper name and the average.
+    interpretations:
+      - id: avg_freight
+        intent: Mean freight over all orders assigned to each shipper.
+        gold_sql: |
+          SELECT s.CompanyName, AVG(o.Freight)
+          FROM Orders o JOIN Shippers s ON s.ShipperID = o.ShipVia
+          GROUP BY s.ShipperID
+
+  - id: A-014
+    label: clear
+    question: List the 5 most expensive products by unit price, from most to least expensive.
+    compare: {ordered: true}
+    interpretations:
+      - id: top5_price
+        intent: Five products with the highest list price, descending.
+        gold_sql: SELECT ProductName FROM Products ORDER BY UnitPrice DESC LIMIT 5
+
+  - id: A-015
+    label: clear
+    trap: date_format
+    question: How many orders were placed on 4 March 2019?
+    interpretations:
+      - id: that_day
+        intent: Orders whose order date falls on 2019-03-04.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE date(OrderDate) = '2019-03-04'
+    naive_sql: SELECT COUNT(*) FROM Orders WHERE OrderDate = '2019-03-04'
+
+  - id: A-016
+    label: clear
+    trap: null_semantics
+    question: How many orders have not been shipped yet?
+    interpretations:
+      - id: unshipped
+        intent: Orders with no ship date.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE ShippedDate IS NULL
+    naive_sql: SELECT COUNT(*) FROM Orders WHERE ShippedDate = ''
+
+  - id: A-017
+    label: clear
+    question: How many orders were shipped after their required date?
+    interpretations:
+      - id: shipped_late
+        intent: Shipped orders whose ship date is after the required date.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE ShippedDate > RequiredDate
+
+  - id: A-018
+    label: clear
+    question: How many products have fewer units in stock than their reorder level?
+    interpretations:
+      - id: below_reorder
+        intent: Products with UnitsInStock below ReorderLevel.
+        gold_sql: SELECT COUNT(*) FROM Products WHERE UnitsInStock < ReorderLevel
+
+  - id: A-019
+    label: clear
+    trap: null_semantics
+    question: How many customers have no country recorded?
+    interpretations:
+      - id: no_country
+        intent: Customers whose country is missing.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE Country IS NULL OR TRIM(Country) = ''
+    naive_sql: SELECT COUNT(*) FROM Customers WHERE Country = ''
+
+  - id: A-020
+    label: clear
+    question: Which employee handled the most orders placed in 2023? Give their last name.
+    interpretations:
+      - id: top_employee
+        intent: Employee with the most 2023 orders.
+        gold_sql: |
+          SELECT e.LastName FROM Orders o JOIN Employees e ON e.EmployeeID = o.EmployeeID
+          WHERE strftime('%Y', o.OrderDate) = '2023'
+          GROUP BY e.EmployeeID ORDER BY COUNT(*) DESC LIMIT 1
+
+  - id: A-021
+    label: clear
+    question: How many territories are there in each region? Return the region name and the count.
+    interpretations:
+      - id: per_region
+        intent: Territory count per sales region.
+        gold_sql: |
+          SELECT r.RegionDescription, COUNT(*)
+          FROM Territories t JOIN Regions r ON r.RegionID = t.RegionID
+          GROUP BY r.RegionID
+
+  - id: A-022
+    label: clear
+    question: How many orders has Alfreds Futterkiste placed?
+    interpretations:
+      - id: orders
+        intent: All orders of that customer.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders o JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE c.CompanyName = 'Alfreds Futterkiste'
+
+  - id: A-023
+    label: clear
+    question: On average, how many line items does an order have?
+    interpretations:
+      - id: avg_lines
+        intent: Mean number of order-detail rows per order.
+        gold_sql: |
+          SELECT AVG(n) FROM (SELECT COUNT(*) AS n FROM "Order Details" GROUP BY OrderID)
+
+  - id: A-024
+    label: clear
+    question: >-
+      What were the top 3 product categories by revenue after discounts (excluding freight)
+      in 2023? List them from highest to lowest.
+    compare: {ordered: true}
+    interpretations:
+      - id: top3
+        intent: Three categories with the highest net revenue on 2023 orders.
+        gold_sql: |
+          SELECT c.CategoryName
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE strftime('%Y', o.OrderDate) = '2023'
+          GROUP BY c.CategoryID
+          ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC
+          LIMIT 3
+
+  - id: A-025
+    label: clear
+    question: Which country are the most of our suppliers based in?
+    interpretations:
+      - id: top_country
+        intent: Country with the most suppliers.
+        gold_sql: |
+          SELECT Country FROM Suppliers GROUP BY Country ORDER BY COUNT(*) DESC LIMIT 1
+
+  - id: A-026
+    label: clear
+    question: How many different products were ordered in 2023?
+    interpretations:
+      - id: distinct_products
+        intent: Distinct products on orders placed in 2023.
+        gold_sql: |
+          SELECT COUNT(DISTINCT d.ProductID)
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2023'
+
+  - id: A-027
+    label: clear
+    question: >-
+      What was revenue after discounts (excluding freight) from the Seafood category in 2020?
+    interpretations:
+      - id: seafood
+        intent: Net product revenue of Seafood on 2020 orders.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE c.CategoryName = 'Seafood' AND strftime('%Y', o.OrderDate) = '2020'
+
+  - id: A-028
+    label: clear
+    question: Which employees were hired in 2013? Give their last names.
+    interpretations:
+      - id: hired_2013
+        intent: Employees with a 2013 hire date.
+        gold_sql: SELECT LastName FROM Employees WHERE strftime('%Y', HireDate) = '2013'
+
+  - id: A-029
+    label: clear
+    question: >-
+      How many orders were placed in each month of 2023? Return the month number and the
+      count, in month order.
+    compare: {ordered: true}
+    interpretations:
+      - id: per_month
+        intent: Order count per month of 2023.
+        gold_sql: |
+          SELECT strftime('%m', OrderDate) AS m, COUNT(*) FROM Orders
+          WHERE strftime('%Y', OrderDate) = '2023' GROUP BY m ORDER BY m
+
+  - id: A-030
+    label: clear
+    question: How many orders were shipped to Brazil in 2022?
+    tags: [ship_vs_customer_country]
+    interpretations:
+      - id: ship_country
+        intent: Orders placed in 2022 whose ship-to country is Brazil.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE ShipCountry = 'Brazil' AND strftime('%Y', OrderDate) = '2022'
+
+  # ------------------------------------------------------------ ambiguous (20)
+  - id: A-031
+    label: ambiguous
+    trap: revenue_definition
+    question: What was our total revenue in 2017?
+    hidden_intent: net
+    interpretations:
+      - id: net
+        intent: Product revenue after discounts, excluding freight, for orders placed in 2017.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2017'
+      - id: gross
+        intent: Product revenue before discounts, excluding freight, for orders placed in 2017.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity)
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2017'
+      - id: net_plus_freight
+        intent: Product revenue after discounts plus freight charged, for orders placed in 2017.
+        gold_sql: |
+          SELECT (SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+                  FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+                  WHERE strftime('%Y', o.OrderDate) = '2017')
+               + (SELECT SUM(Freight) FROM Orders WHERE strftime('%Y', OrderDate) = '2017')
+
+  - id: A-032
+    label: ambiguous
+    trap: revenue_definition
+    question: What was the revenue for each product category in 2016?
+    hidden_intent: gross
+    interpretations:
+      - id: gross
+        intent: Per category, product revenue before discounts (list value of what was ordered), on 2016 orders.
+        gold_sql: |
+          SELECT c.CategoryName, SUM(d.UnitPrice * d.Quantity)
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE strftime('%Y', o.OrderDate) = '2016'
+          GROUP BY c.CategoryID
+      - id: net
+        intent: Per category, product revenue after discounts, on 2016 orders.
+        gold_sql: |
+          SELECT c.CategoryName, SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d
+          JOIN Orders o ON o.OrderID = d.OrderID
+          JOIN Products p ON p.ProductID = d.ProductID
+          JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE strftime('%Y', o.OrderDate) = '2016'
+          GROUP BY c.CategoryID
+
+  - id: A-033
+    label: ambiguous
+    trap: revenue_definition
+    question: What was the average order value in 2020?
+    hidden_intent: with_freight
+    interpretations:
+      - id: with_freight
+        intent: Average per order of product value after discounts plus the freight charged, for 2020 orders.
+        gold_sql: |
+          SELECT AVG(v) FROM (
+            SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) + o.Freight AS v
+            FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID
+            WHERE strftime('%Y', o.OrderDate) = '2020' GROUP BY o.OrderID)
+      - id: products_only
+        intent: Average per order of product value after discounts, excluding freight, for 2020 orders.
+        gold_sql: |
+          SELECT AVG(v) FROM (
+            SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) AS v
+            FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID
+            WHERE strftime('%Y', o.OrderDate) = '2020' GROUP BY o.OrderID)
+
+  - id: A-034
+    label: ambiguous
+    trap: late_orders
+    question: How many orders were late?
+    hidden_intent: shipped_late
+    interpretations:
+      - id: shipped_late
+        intent: Orders that shipped after their required date. Orders not yet shipped don't count.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE ShippedDate > RequiredDate
+      - id: late_or_unshipped
+        intent: Orders that shipped after their required date, plus orders still not shipped whose required date has passed.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE ShippedDate > RequiredDate
+             OR (ShippedDate IS NULL AND RequiredDate < (SELECT MAX(OrderDate) FROM Orders))
+
+  - id: A-035
+    label: ambiguous
+    trap: late_orders
+    question: How many orders placed in 2018 were late?
+    hidden_intent: late_or_unshipped
+    interpretations:
+      - id: late_or_unshipped
+        intent: 2018 orders that shipped after their required date, plus 2018 orders never shipped whose required date has passed.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE strftime('%Y', OrderDate) = '2018'
+            AND (ShippedDate > RequiredDate
+                 OR (ShippedDate IS NULL AND RequiredDate < (SELECT MAX(OrderDate) FROM Orders)))
+      - id: shipped_late
+        intent: 2018 orders that shipped after their required date only.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE strftime('%Y', OrderDate) = '2018' AND ShippedDate > RequiredDate
+
+  - id: A-036
+    label: ambiguous
+    trap: active_products
+    question: How many active products do we have?
+    hidden_intent: not_discontinued
+    interpretations:
+      - id: not_discontinued
+        intent: Products that are not discontinued, whether or not they are in stock.
+        gold_sql: SELECT COUNT(*) FROM Products WHERE Discontinued = '0'
+      - id: in_stock
+        intent: Products that currently have units in stock.
+        gold_sql: SELECT COUNT(*) FROM Products WHERE UnitsInStock > 0
+
+  - id: A-037
+    label: ambiguous
+    trap: active_products
+    question: List the active products in the Beverages category.
+    hidden_intent: in_stock
+    interpretations:
+      - id: in_stock
+        intent: Beverages that currently have units in stock, discontinued or not.
+        gold_sql: |
+          SELECT p.ProductName FROM Products p JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE c.CategoryName = 'Beverages' AND p.UnitsInStock > 0
+      - id: not_discontinued
+        intent: Beverages that are not discontinued.
+        gold_sql: |
+          SELECT p.ProductName FROM Products p JOIN Categories c ON c.CategoryID = p.CategoryID
+          WHERE c.CategoryName = 'Beverages' AND p.Discontinued = '0'
+
+  - id: A-038
+    label: ambiguous
+    trap: ship_vs_customer_country
+    question: How many orders came from Germany in 2021?
+    hidden_intent: customer_country
+    interpretations:
+      - id: customer_country
+        intent: 2021 orders placed by customers based in Germany, wherever they were shipped.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders o JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE c.Country = 'Germany' AND strftime('%Y', o.OrderDate) = '2021'
+      - id: ship_country
+        intent: 2021 orders shipped to an address in Germany.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE ShipCountry = 'Germany' AND strftime('%Y', OrderDate) = '2021'
+
+  - id: A-039
+    label: ambiguous
+    trap: ship_vs_customer_country
+    question: Which three countries placed the most orders in 2020? List them from most to fewest.
+    hidden_intent: ship_country
+    compare: {ordered: true}
+    interpretations:
+      - id: ship_country
+        intent: Ranking by the country orders were shipped to, for 2020 orders.
+        gold_sql: |
+          SELECT ShipCountry FROM Orders WHERE strftime('%Y', OrderDate) = '2020'
+          GROUP BY ShipCountry ORDER BY COUNT(*) DESC LIMIT 3
+      - id: customer_country
+        intent: Ranking by the customer's home country, for 2020 orders.
+        gold_sql: |
+          SELECT c.Country FROM Orders o JOIN Customers c ON c.CustomerID = o.CustomerID
+          WHERE strftime('%Y', o.OrderDate) = '2020'
+          GROUP BY c.Country ORDER BY COUNT(*) DESC LIMIT 3
+
+  - id: A-040
+    label: ambiguous
+    trap: relative_date
+    question: How many orders did we receive last year?
+    hidden_intent: calendar_year
+    interpretations:
+      - id: calendar_year
+        intent: Orders placed in calendar year 2022, the last complete year in the data.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE strftime('%Y', OrderDate) = '2022'
+      - id: trailing_12_months
+        intent: Orders placed in the 12 months up to the latest order date in the data.
+        gold_sql: |
+          SELECT COUNT(*) FROM Orders
+          WHERE OrderDate > datetime((SELECT MAX(OrderDate) FROM Orders), '-12 months')
+
+  - id: A-041
+    label: ambiguous
+    trap: relative_date
+    question: What were product sales (after discounts, excluding freight) in Q4?
+    hidden_intent: latest_q4
+    interpretations:
+      - id: latest_q4
+        intent: October to December 2022, the most recent complete fourth quarter.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2022' AND strftime('%m', o.OrderDate) IN ('10', '11', '12')
+      - id: all_q4s
+        intent: October to December summed across every year in the data.
+        gold_sql: |
+          SELECT SUM(d.UnitPrice * d.Quantity * (1 - d.Discount))
+          FROM "Order Details" d JOIN Orders o ON o.OrderID = d.OrderID
+          WHERE strftime('%m', o.OrderDate) IN ('10', '11', '12')
+
+  - id: A-042
+    label: ambiguous
+    trap: ranking_metric
+    question: Who was our top salesperson in 2023? Give their last name.
+    hidden_intent: by_revenue
+    interpretations:
+      - id: by_revenue
+        intent: The employee whose 2023 orders brought in the most product revenue.
+        gold_sql: |
+          SELECT e.LastName FROM Orders o
+          JOIN Employees e ON e.EmployeeID = o.EmployeeID
+          JOIN "Order Details" d ON d.OrderID = o.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2023'
+          GROUP BY e.EmployeeID ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC LIMIT 1
+      - id: by_orders
+        intent: The employee who handled the most orders in 2023.
+        gold_sql: |
+          SELECT e.LastName FROM Orders o JOIN Employees e ON e.EmployeeID = o.EmployeeID
+          WHERE strftime('%Y', o.OrderDate) = '2023'
+          GROUP BY e.EmployeeID ORDER BY COUNT(*) DESC LIMIT 1
+
+  - id: A-043
+    label: ambiguous
+    trap: ranking_metric
+    question: Who are our top 5 customers? Give their company names.
+    hidden_intent: by_orders
+    interpretations:
+      - id: by_orders
+        intent: The five customers who placed the most orders, over all time.
+        gold_sql: |
+          SELECT c.CompanyName FROM Orders o JOIN Customers c ON c.CustomerID = o.CustomerID
+          GROUP BY c.CustomerID ORDER BY COUNT(*) DESC LIMIT 5
+      - id: by_revenue
+        intent: The five customers with the most product revenue after discounts, over all time.
+        gold_sql: |
+          SELECT c.CompanyName FROM Orders o
+          JOIN Customers c ON c.CustomerID = o.CustomerID
+          JOIN "Order Details" d ON d.OrderID = o.OrderID
+          GROUP BY c.CustomerID ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC LIMIT 5
+
+  - id: A-044
+    label: ambiguous
+    trap: ranking_metric
+    question: What is our most popular product?
+    hidden_intent: by_units
+    interpretations:
+      - id: by_units
+        intent: The product with the most units ordered, over all time.
+        gold_sql: |
+          SELECT p.ProductName FROM "Order Details" d JOIN Products p ON p.ProductID = d.ProductID
+          GROUP BY p.ProductID ORDER BY SUM(d.Quantity) DESC LIMIT 1
+      - id: by_revenue
+        intent: The product that brought in the most revenue after discounts, over all time.
+        gold_sql: |
+          SELECT p.ProductName FROM "Order Details" d JOIN Products p ON p.ProductID = d.ProductID
+          GROUP BY p.ProductID ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC LIMIT 1
+
+  - id: A-045
+    label: ambiguous
+    trap: ranking_metric
+    question: What was our biggest order in 2021? Give the order ID.
+    hidden_intent: by_value
+    interpretations:
+      - id: by_value
+        intent: The 2021 order with the highest product value after discounts.
+        gold_sql: |
+          SELECT o.OrderID FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2021'
+          GROUP BY o.OrderID ORDER BY SUM(d.UnitPrice * d.Quantity * (1 - d.Discount)) DESC LIMIT 1
+      - id: by_units
+        intent: The 2021 order with the most units on it.
+        gold_sql: |
+          SELECT o.OrderID FROM Orders o JOIN "Order Details" d ON d.OrderID = o.OrderID
+          WHERE strftime('%Y', o.OrderDate) = '2021'
+          GROUP BY o.OrderID ORDER BY SUM(d.Quantity) DESC LIMIT 1
+
+  - id: A-046
+    label: ambiguous
+    trap: average_definition
+    question: What is the average discount we give, as a fraction between 0 and 1?
+    hidden_intent: discounted_lines
+    compare: {abs_tol: 0.000001}
+    interpretations:
+      - id: discounted_lines
+        intent: The average discount rate on order lines that actually received a discount.
+        gold_sql: SELECT AVG(Discount) FROM "Order Details" WHERE Discount > 0
+      - id: all_lines
+        intent: The average discount rate over all order lines, counting undiscounted lines as zero.
+        gold_sql: SELECT AVG(Discount) FROM "Order Details"
+
+  - id: A-047
+    label: ambiguous
+    trap: average_definition
+    question: What is the average price of our products?
+    hidden_intent: all_products
+    interpretations:
+      - id: all_products
+        intent: The average list price over every product in the catalogue, discontinued ones included.
+        gold_sql: SELECT AVG(UnitPrice) FROM Products
+      - id: current_products
+        intent: The average list price of products that are not discontinued.
+        gold_sql: SELECT AVG(UnitPrice) FROM Products WHERE Discontinued = '0'
+
+  - id: A-048
+    label: ambiguous
+    trap: region_definition
+    question: How many customers do we have in Europe?
+    hidden_intent: geographic
+    interpretations:
+      - id: geographic
+        intent: Customers in any European country, including the UK, Ireland and the Nordic countries.
+        gold_sql: |
+          SELECT COUNT(*) FROM Customers
+          WHERE Region IN ('Western Europe', 'Southern Europe', 'Northern Europe',
+                           'Eastern Europe', 'British Isles', 'Scandinavia')
+      - id: europe_label
+        intent: Customers whose sales region is literally labelled as a Europe region.
+        gold_sql: SELECT COUNT(*) FROM Customers WHERE Region LIKE '%Europe%'
+
+  - id: A-049
+    label: ambiguous
+    trap: growth_definition
+    question: Which product category grew the most from 2020 to 2021?
+    hidden_intent: percentage
+    interpretations:
+      - id: percentage
+        intent: The category with the largest percentage increase in product revenue from 2020 to 2021.
+        gold_sql: |
+          WITH r AS (
+            SELECT c.CategoryName AS name,
+                   SUM(CASE WHEN strftime('%Y', o.OrderDate) = '2020' THEN d.UnitPrice * d.Quantity * (1 - d.Discount) END) AS y20,
+                   SUM(CASE WHEN strftime('%Y', o.OrderDate) = '2021' THEN d.UnitPrice * d.Quantity * (1 - d.Discount) END) AS y21
+            FROM "Order Details" d
+            JOIN Orders o ON o.OrderID = d.OrderID
+            JOIN Products p ON p.ProductID = d.ProductID
+            JOIN Categories c ON c.CategoryID = p.CategoryID
+            GROUP BY c.CategoryID)
+          SELECT name FROM r ORDER BY (y21 - y20) / y20 DESC LIMIT 1
+      - id: absolute
+        intent: The category with the largest increase in product revenue, in currency, from 2020 to 2021.
+        gold_sql: |
+          WITH r AS (
+            SELECT c.CategoryName AS name,
+                   SUM(CASE WHEN strftime('%Y', o.OrderDate) = '2020' THEN d.UnitPrice * d.Quantity * (1 - d.Discount) END) AS y20,
+                   SUM(CASE WHEN strftime('%Y', o.OrderDate) = '2021' THEN d.UnitPrice * d.Quantity * (1 - d.Discount) END) AS y21
+            FROM "Order Details" d
+            JOIN Orders o ON o.OrderID = d.OrderID
+            JOIN Products p ON p.ProductID = d.ProductID
+            JOIN Categories c ON c.CategoryID = p.CategoryID
+            GROUP BY c.CategoryID)
+          SELECT name FROM r ORDER BY y21 - y20 DESC LIMIT 1
+
+  - id: A-050
+    label: ambiguous
+    trap: ranking_metric
+    question: What is the average order size?
+    hidden_intent: units
+    interpretations:
+      - id: units
+        intent: The average number of units per order.
+        gold_sql: |
+          SELECT AVG(q) FROM (SELECT SUM(Quantity) AS q FROM "Order Details" GROUP BY OrderID)
+      - id: value
+        intent: The average product value per order after discounts.
+        gold_sql: |
+          SELECT AVG(v) FROM (
+            SELECT SUM(UnitPrice * Quantity * (1 - Discount)) AS v FROM "Order Details" GROUP BY OrderID)
+
+  # --------------------------------------------------------- unanswerable (10)
+  - id: A-051
+    label: unanswerable
+    question: What was our profit margin in 2022?
+    reason: There is no product cost or expense data, only selling prices.
+
+  - id: A-052
+    label: unanswerable
+    question: How much did we spend on marketing last year?
+    reason: The database holds no marketing or expense data.
+
+  - id: A-053
+    label: unanswerable
+    question: What is our average customer satisfaction score?
+    reason: No survey, rating, or satisfaction data exists.
+
+  - id: A-054
+    label: unanswerable
+    question: How many of our customers' contacts are under 30 years old?
+    reason: Customer contacts have no age or birth date; CustomerDemographics is empty.
+
+  - id: A-055
+    label: unanswerable
+    question: How many visitors did our website have in 2023?
+    reason: No web or traffic data exists.
+
+  - id: A-056
+    label: unanswerable
+    question: What are the salaries of our sales representatives?
+    reason: Employees has no salary or compensation column.
+
+  - id: A-057
+    label: unanswerable
+    question: How many units of Chai did we have in stock at the end of 2021?
+    reason: Only the current stock level is stored; there is no stock history.
+
+  - id: A-058
+    label: unanswerable
+    question: What percentage of orders were returned by customers?
+    reason: There is no returns or refunds data.
+
+  - id: A-059
+    label: unanswerable
+    question: How many days does each supplier take to deliver stock to our warehouse?
+    reason: There are no purchase orders or inbound deliveries, only sales orders.
+
+  - id: A-060
+    label: unanswerable
+    question: Which competitors sell Chai for less than we do?
+    reason: There is no competitor or market price data.
