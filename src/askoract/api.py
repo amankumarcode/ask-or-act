@@ -26,13 +26,14 @@ from askoract.config import (
 from askoract.datasets import BuildReport, Dataset
 from askoract.db import Database
 from askoract.eval.cases import Suite
-from askoract.eval.runner import EvalRun
+from askoract.eval.report import write_report
+from askoract.eval.runner import RESULTS_FILE, EvalRun, load_scores
 from askoract.eval.runner import run_eval as _run_eval
 from askoract.eval.scorer import CaseScore
 from askoract.eval.validate import SuiteReport, validate_suite
 from askoract.llm.base import LLMClient
 from askoract.llm.client import missing_credentials
-from askoract.runs import Run, new_run
+from askoract.runs import Run, manifest, new_run, resolve_run
 from askoract.tools import TOOLS, Tool, ToolContext, ToolResult, Toolset
 from askoract.tracing.tracer import Sink, Tracer
 from askoract.users import NoUser, SimulatedUser, UserChannel
@@ -266,6 +267,9 @@ def run_eval(
     *,
     limit: int | None = None,
     case_ids: list[str] | None = None,
+    concurrency: int = 4,
+    max_cost_usd: float | None = None,
+    resume: str | None = None,
     overrides: list[str] | None = None,
     sinks: list[Sink] | None = None,
     on_score: Callable[[CaseScore, int, int], None] | None = None,
@@ -273,20 +277,45 @@ def run_eval(
     user_llm: LLMClient | None = None,
     settings: Settings | None = None,
 ) -> EvalRun:
-    """Run suites for profiles; scores go to runs/<id>/results.jsonl, traces alongside."""
+    """Run suites for profiles, then write results.json and summary.md into the run dir.
+
+    With `resume` (a run id), the run's own manifest decides profiles, suites, limit and
+    cases, so finishing an interrupted run can't silently change what is measured.
+    """
     settings = settings or get_settings(overrides)
-    profs = [get_profile(p, overrides, settings=settings) for p in (profiles or [None])]
+    prior = resolve_run(settings, resume) if resume else None
+    if prior:
+        m = manifest(prior)
+        profs = [AgentProfile(**p) for p in m["profiles"]]
+        suites, limit, case_ids = m["benchmarks"], m.get("limit"), m.get("case_ids")
+    else:
+        profs = [get_profile(p, overrides, settings=settings) for p in (profiles or [None])]
     benches = [
         YamlSuiteBenchmark(settings, load_suite(settings, name), user_llm=user_llm)
         for name in (suites or list_suites(settings))
     ]
-    return _run_eval(
+    out = _run_eval(
         settings,
         profs,
         benches,
         limit=limit,
         case_ids=case_ids,
+        concurrency=concurrency,
+        max_cost_usd=max_cost_usd,
+        resume=prior,
         llm_factory=llm_factory,
         sinks=sinks,
         on_score=on_score,
     )
+    write_report(out.run.dir, out.scores, profile_order=[p.name for p in profs])
+    return out
+
+
+def report(run_id: str = "latest", settings: Settings | None = None) -> Path:
+    """Rebuild results.json and summary.md for a run from its results.jsonl."""
+    run = resolve_run(settings or get_settings(), run_id)
+    scores = load_scores(run.dir / RESULTS_FILE)
+    if not scores:
+        raise FileNotFoundError(f"run {run.id} has no scored cases yet")
+    order = [p["name"] for p in manifest(run).get("profiles", [])]
+    return write_report(run.dir, scores, profile_order=order)

@@ -1,4 +1,4 @@
-.PHONY: help install setup test test-all lint fmt demo eval trace clean
+.PHONY: help install setup test test-all lint fmt demo eval report trace clean
 
 RUN := uv run askoract
 
@@ -28,8 +28,12 @@ fmt:  ## Auto-fix lint issues and format
 demo:  ## Run the showcase questions (baseline vs full agent)
 	$(RUN) demo
 
-eval:  ## Run the full test set for every profile and write the results table
-	$(RUN) eval --profile baseline --profile full
+PROFILES ?= baseline full
+eval:  ## Run all suites for PROFILES and write the report: make eval PROFILES="baseline_haiku full_haiku" MAX_COST=0.5
+	$(RUN) eval $(foreach p,$(PROFILES),--profile $(p)) $(if $(MAX_COST),--max-cost $(MAX_COST))
+
+report:  ## Rebuild and print the report of a run: make report RUN_ID=latest
+	$(RUN) report $(or $(RUN_ID),latest)
 
 trace:  ## Show the trace of one case: make trace RUN_ID=latest CASE=A-001
 	$(RUN) trace $(or $(RUN_ID),latest) $(CASE)

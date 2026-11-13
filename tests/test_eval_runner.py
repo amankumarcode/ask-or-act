@@ -111,3 +111,40 @@ def test_select_cases():
     cases = Suite(**SUITE).cases
     assert [c.id for c in select_cases(cases, limit=2)] == ["T-1", "T-2"]
     assert [c.id for c in select_cases(cases, case_ids=["T-3"])] == ["T-3"]
+
+
+def _factory(prof, case):
+    return FakeLLM(SCRIPTS[case.id])
+
+
+def test_parallel_run_gives_the_same_scores(setup):
+    settings, bench, _ = setup
+    profile = load_profile(settings, "full")
+    out = run_eval(settings, [profile], [bench], concurrency=3, llm_factory=_factory)
+    assert sorted(s.case_id for s in out.scores) == ["T-1", "T-2", "T-3"]
+    assert all(s.correct for s in out.scores)
+    assert len((out.run.dir / RESULTS_FILE).read_text().splitlines()) == 3
+
+
+def test_budget_stops_new_cases_and_resume_finishes(setup):
+    settings, bench, _ = setup
+    profile = load_profile(settings, "full")
+    # Each scripted turn bills $0.01; T-1 takes two turns, so a $0.015 cap stops after it.
+    first = run_eval(settings, [profile], [bench], max_cost_usd=0.015, llm_factory=_factory)
+    assert [s.case_id for s in first.scores] == ["T-1"]
+    assert first.skipped_for_budget == 2
+
+    resumed = run_eval(settings, [profile], [bench], resume=first.run, llm_factory=_factory)
+    assert resumed.run.dir == first.run.dir and resumed.resumed == 1
+    assert sorted(s.case_id for s in resumed.scores) == ["T-1", "T-2", "T-3"]
+    lines = (first.run.dir / RESULTS_FILE).read_text().splitlines()
+    assert len(lines) == 3  # T-1 was not run twice
+
+
+def test_report_from_results_file(setup):
+    from askoract import api
+
+    settings, bench, _ = setup
+    out = run_eval(settings, [load_profile(settings, "full")], [bench], llm_factory=_factory)
+    md = api.report(out.run.id, settings=settings)
+    assert "**100% (3/3)**" in md.read_text()

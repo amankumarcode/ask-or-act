@@ -1,0 +1,9 @@
+name: baseline_haiku
+description: Same as baseline, on the cheaper model.
+prompt: agent/minimal_v1
+tool_descriptions: tools/v1
+tools:
+  - run_sql
+  - final_answer
+llm:
+  model: anthropic/claude-haiku-5-5

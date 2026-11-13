@@ -5,6 +5,7 @@ Correctness re-executes the agent's final SQL and compares result sets with the 
 and efficiency signals are recorded alongside, so every report is one pass over scores.
 """
 
+import threading
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -65,16 +66,21 @@ class CaseScore:
 
 
 class GoldCache:
-    """Gold results keyed by (variant, sql), shared across profiles in one eval run."""
+    """Gold results keyed by (variant, sql), shared across profiles and worker threads."""
 
     def __init__(self) -> None:
         self._results: dict[tuple[str, str], QueryResult] = {}
+        self._lock = threading.Lock()
 
     def get(self, db: Database, variant: str, sql: str) -> QueryResult:
         key = (variant, sql)
-        if key not in self._results:
-            self._results[key] = run_gold(db, sql)
-        return self._results[key]
+        with self._lock:
+            hit = self._results.get(key)
+        if hit is None:
+            hit = run_gold(db, sql)  # outside the lock: each thread queries its own connection
+            with self._lock:
+                self._results.setdefault(key, hit)
+        return hit
 
 
 def ask_decision(should_ask: bool, asked: bool) -> AskDecision:

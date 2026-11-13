@@ -105,3 +105,7 @@ def resolve_run(settings: Settings, run_id: str = LATEST) -> Run:
         raise FileNotFoundError(f"no run {run_id!r} in {settings.paths.runs_dir}")
     resolved = path.resolve()
     return Run(resolved.name, resolved)
+
+
+def manifest(run: Run) -> dict[str, Any]:
+    return json.loads((run.dir / "manifest.json").read_text())

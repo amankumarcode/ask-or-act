@@ -8,6 +8,7 @@ from typing import Annotated, NoReturn
 import typer
 import yaml
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -324,11 +325,23 @@ def eval_(
     case: Annotated[
         list[str] | None, typer.Option("--case", "-c", help="Only these case ids.")
     ] = None,
+    concurrency: Annotated[int, typer.Option(help="Cases run in parallel.")] = 4,
+    max_cost: Annotated[
+        float | None,
+        typer.Option("--max-cost", help="Stop starting new cases once this many USD are billed."),
+    ] = None,
+    resume: Annotated[
+        str | None, typer.Option(help="Finish an interrupted run (run id or 'latest').")
+    ] = None,
     set_: SetOption = None,
 ) -> None:
-    """Run test suites for one or more profiles and score every case."""
+    """Run test suites for one or more profiles, score every case, write the report."""
     settings = api.get_settings(set_)
-    profs = [api.get_profile(p, set_, settings=settings) for p in (profile or [None])]
+    if resume:
+        prior = api.resolve_run(settings, resume)
+        profs = [api.AgentProfile(**p) for p in api.manifest(prior)["profiles"]]
+    else:
+        profs = [api.get_profile(p, set_, settings=settings) for p in (profile or [None])]
     if missing := api.check_credentials(profs, settings):
         for model, keys in missing.items():
             console.print(f"[red]{model} needs {', '.join(keys)}.[/]")
@@ -349,6 +362,9 @@ def eval_(
         suite,
         limit=limit,
         case_ids=case,
+        concurrency=concurrency,
+        max_cost_usd=max_cost,
+        resume=resume,
         overrides=set_,
         on_score=progress,
         settings=settings,
@@ -356,26 +372,36 @@ def eval_(
     _print_eval_summary(out)
 
 
+@app.command()
+def report(run_id: Annotated[str, typer.Argument(help="Run id.")] = "latest") -> None:
+    """Rebuild and print the results tables of an eval run."""
+    try:
+        path = api.report(run_id)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=2) from None
+    console.print(Markdown(path.read_text()))
+    console.print(f"[dim]{path}[/]")
+
+
 def _print_eval_summary(out: "api.EvalRun") -> None:
-    table = Table("profile", "cases", "correct", "accuracy", "asked", "cost", "billed")
-    by_profile: dict[str, list[CaseScore]] = {}
-    for s in out.scores:
-        by_profile.setdefault(s.profile, []).append(s)
-    for name, scores in by_profile.items():
-        n = len(scores)
-        right = sum(s.correct for s in scores)
-        table.add_row(
-            name,
-            str(n),
-            str(right),
-            f"{right / n:.0%}" if n else "-",
-            str(sum(s.asked for s in scores)),
-            f"${sum(s.cost_usd for s in scores):.3f}",
-            f"${sum(s.billed_usd for s in scores):.3f}",
-        )
+    md = out.run.dir / "summary.md"
     console.print()
-    console.print(table)
-    console.print(f"[dim]results: {out.run.dir / 'results.jsonl'}[/]")
+    if md.is_file():
+        console.print(Markdown(md.read_text()))
+    notes = []
+    if out.resumed:
+        notes.append(f"{out.resumed} cases reused from the earlier run")
+    if out.skipped_for_budget:
+        notes.append(
+            f"[yellow]{out.skipped_for_budget} cases not started: budget reached. "
+            f"Finish with --resume {out.run.id}[/]"
+        )
+    billed = sum(s.billed_usd for s in out.scores)
+    notes.append(f"billed this run: ${billed:.4f}")
+    for note in notes:
+        console.print(f"[dim]{note}[/]")
+    console.print(f"[dim]results: {out.run.dir}[/]")
 
 
 @app.command()
