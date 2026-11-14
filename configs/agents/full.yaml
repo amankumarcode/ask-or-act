@@ -1,6 +1,6 @@
 name: full
 description: Full prompt and every tool. Explores the schema, checks values, asks when ambiguous.
-prompt: agent/full_v1
+prompt: agent/full_v2
 tool_descriptions: tools/v1
 tools:
   - list_tables
@@ -10,3 +10,4 @@ tools:
   - run_sql
   - ask_user
   - final_answer
+assumption_check: true

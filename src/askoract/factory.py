@@ -12,9 +12,9 @@ from askoract.llm.base import LLMClient
 from askoract.llm.cache import ResponseCache
 from askoract.llm.client import LiteLLMClient
 from askoract.prompts import load_prompt, load_tool_descriptions, prompt_text
-from askoract.tools import Tool, Toolset
+from askoract.tools import Tool, ToolContext, Toolset
 from askoract.tracing.tracer import Tracer
-from askoract.users import SimulatedUser
+from askoract.users import SimulatedUser, UserChannel
 
 _CACHES: dict[Path, ResponseCache] = {}
 
@@ -81,6 +81,22 @@ def build_agent(
         system_prompt=system_prompt,
         limits=profile.limits,
         tracer=tracer,
+    )
+
+
+def make_context(
+    profile: AgentProfile,
+    db: Database,
+    user: UserChannel,
+    *,
+    tracer: Tracer | None = None,
+) -> ToolContext:
+    return ToolContext(
+        db=db,
+        user=user,
+        limits=profile.limits,
+        tracer=tracer or Tracer(),
+        assumption_check=profile.assumption_check and "ask_user" in profile.tools,
     )
 
 

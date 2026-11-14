@@ -17,3 +17,6 @@ runs/
 .DS_Store
 .vscode/
 .idea/
+
+# Internal notes (design decisions, extending), not for publication
+INTERNAL.md

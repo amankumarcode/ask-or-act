@@ -1,4 +1,4 @@
-.PHONY: help install setup test test-all lint fmt demo eval report trace clean
+.PHONY: help install setup test test-all lint fmt demo eval report publish trace clean
 
 RUN := uv run askoract
 
@@ -34,6 +34,9 @@ eval:  ## Run all suites for PROFILES and write the report: make eval PROFILES="
 
 report:  ## Rebuild and print the report of a run: make report RUN_ID=latest
 	$(RUN) report $(or $(RUN_ID),latest)
+
+publish:  ## Copy a run's report into results/ and refresh the README: make publish RUN_ID=latest NAME=haiku
+	$(RUN) publish $(or $(RUN_ID),latest) $(if $(NAME),--name $(NAME))
 
 trace:  ## Show the trace of one case: make trace RUN_ID=latest CASE=A-001
 	$(RUN) trace $(or $(RUN_ID),latest) $(CASE)

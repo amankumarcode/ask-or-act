@@ -29,6 +29,8 @@ class ToolContext:
     limits: Limits
     tracer: Tracer = field(default_factory=Tracer)
     clarifications: list[tuple[str, str]] = field(default_factory=list)  # (question, reply)
+    assumption_check: bool = False  # see AgentProfile.assumption_check
+    assumption_reviewed: bool = False  # set once the check has been shown
 
 
 @dataclass

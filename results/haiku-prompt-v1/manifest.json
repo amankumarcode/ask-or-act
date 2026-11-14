@@ -1,0 +1,97 @@
+{
+  "run_id": "eval-20261113-224946",
+  "kind": "eval",
+  "created_at": "2026-11-13T22:49:46",
+  "git": {
+    "sha": "f3c2337e6a7863412f4f07f3c4d75938e3ad41bc",
+    "dirty": false
+  },
+  "seed": 42,
+  "profiles": [
+    {
+      "name": "baseline_haiku",
+      "description": "Same as baseline, on the cheaper model.",
+      "prompt": "agent/minimal_v1",
+      "tool_descriptions": "tools/v1",
+      "tools": [
+        "run_sql",
+        "final_answer"
+      ],
+      "llm": {
+        "model": "anthropic/claude-haiku-5-5",
+        "max_tokens": 16000,
+        "temperature": null,
+        "prompt_caching": true,
+        "timeout_s": 300.0,
+        "max_retries": 2,
+        "params": {}
+      },
+      "limits": {
+        "max_steps": 15,
+        "max_cost_usd": 0.5,
+        "max_clarifications": 2,
+        "sql_max_rows": 200,
+        "sql_timeout_s": 10.0,
+        "max_output_chars": 8000
+      }
+    },
+    {
+      "name": "full_haiku",
+      "description": "Same as full, on the cheaper model.",
+      "prompt": "agent/full_v1",
+      "tool_descriptions": "tools/v1",
+      "tools": [
+        "list_tables",
+        "describe_table",
+        "sample_rows",
+        "get_column_stats",
+        "run_sql",
+        "ask_user",
+        "final_answer"
+      ],
+      "llm": {
+        "model": "anthropic/claude-haiku-5-5",
+        "max_tokens": 16000,
+        "temperature": null,
+        "prompt_caching": true,
+        "timeout_s": 300.0,
+        "max_retries": 2,
+        "params": {}
+      },
+      "limits": {
+        "max_steps": 15,
+        "max_cost_usd": 0.5,
+        "max_clarifications": 2,
+        "sql_max_rows": 200,
+        "sql_timeout_s": 10.0,
+        "max_output_chars": 8000
+      }
+    }
+  ],
+  "simulated_user": {
+    "llm": {
+      "model": "anthropic/claude-haiku-5-5",
+      "max_tokens": 2048,
+      "temperature": null,
+      "prompt_caching": true,
+      "timeout_s": 300.0,
+      "max_retries": 2,
+      "params": {}
+    },
+    "prompt": "sim_user/v1"
+  },
+  "prompts": {
+    "agent/full_v1.md": "b99fe5857b4b",
+    "agent/minimal_v1.md": "b42fb33b86e0",
+    "sim_user/v1.md": "d6fad5bd12c9",
+    "tools/v1.yaml": "60265c8d7e6f"
+  },
+  "benchmarks": [
+    "northwind_a",
+    "northwind_b"
+  ],
+  "limit": null,
+  "case_ids": null,
+  "n_runs": 180,
+  "max_cost_usd": 0.5
+}

@@ -148,3 +148,38 @@ def test_report_from_results_file(setup):
     out = run_eval(settings, [load_profile(settings, "full")], [bench], llm_factory=_factory)
     md = api.report(out.run.id, settings=settings)
     assert "**100% (3/3)**" in md.read_text()
+
+
+def test_trace_view_of_an_eval_case(setup):
+    from askoract import api
+
+    settings, bench, _ = setup
+    out = run_eval(settings, [load_profile(settings, "full")], [bench], llm_factory=_factory)
+    assert api.list_traces(out.run.id, settings) == ["full/T-1", "full/T-2", "full/T-3"]
+    view = api.load_trace_view(out.run.id, "T-2", settings=settings)
+    assert view.case_id == "T-2" and view.score["correct"] is True
+    assert [s.kind for s in view.steps] == ["ask"]
+    with pytest.raises(KeyError, match="not found"):
+        api.load_trace_view(out.run.id, "T-9", settings=settings)
+
+
+def test_demo_config_is_valid(repo_root):
+    from askoract import api
+
+    settings = load_settings(repo_root)
+    demo = api.load_demo(settings)
+    suites = {name: api.get_suite(name, settings) for name in api.list_suites(settings)}
+    for item in demo.cases:
+        assert item["case"] in {c.id for c in suites[item["suite"]].cases}, item
+        assert item.get("why"), item
+    for name in demo.profiles:
+        load_profile(settings, name)
+
+
+def test_empty_selection_is_an_error_not_an_empty_run(setup):
+    settings, bench, _ = setup
+    with pytest.raises(ValueError, match="no cases selected"):
+        run_eval(settings, [load_profile(settings, "full")], [bench], case_ids=["NOPE"])
+    assert not (settings.paths.runs_dir).exists() or not list(
+        settings.paths.runs_dir.glob("eval-*")
+    )

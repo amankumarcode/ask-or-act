@@ -21,10 +21,9 @@ from askoract.benchmarks.base import Benchmark
 from askoract.config import AgentProfile, Settings
 from askoract.eval.cases import TestCase
 from askoract.eval.scorer import CaseScore, GoldCache, score_case
-from askoract.factory import build_agent
+from askoract.factory import build_agent, make_context
 from askoract.llm.base import LLMClient
 from askoract.runs import Run, new_run
-from askoract.tools import ToolContext
 from askoract.tracing.tracer import Sink
 
 RESULTS_FILE = "results.jsonl"
@@ -78,7 +77,7 @@ def _run_one(
             llm=llm_factory(profile, case) if llm_factory else None,
             extra_tools=env.extra_tools,
         )
-        ctx = ToolContext(db=env.db, user=env.user, limits=profile.limits, tracer=tracer)
+        ctx = make_context(profile, env.db, env.user, tracer=tracer)
         result = agent.run(case.question, ctx)
         scorer = env.scorer or score_case
         return scorer(case, result, env.db, gold, suite=bench.name, profile=profile.name)
@@ -100,6 +99,7 @@ def run_eval(
     llm_factory: Callable[[AgentProfile, TestCase], LLMClient] | None = None,
     sinks: list[Sink] | None = None,
     on_score: Callable[[CaseScore, int, int], None] | None = None,
+    kind: str = "eval",
 ) -> EvalRun:
     plan: list[Task] = [
         (profile, bench, case)
@@ -107,9 +107,13 @@ def run_eval(
         for bench in benchmarks
         for case in select_cases(list(bench.cases()), limit=limit, case_ids=case_ids)
     ]
+    if not plan:
+        raise ValueError(
+            f"no cases selected (case ids: {case_ids or 'all'}, limit: {limit}); nothing to run"
+        )
     run = resume or new_run(
         settings,
-        "eval",
+        kind,
         profiles,
         extra={
             "benchmarks": [b.name for b in benchmarks],

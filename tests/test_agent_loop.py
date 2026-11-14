@@ -198,3 +198,27 @@ def test_baseline_profile_cannot_call_tools_it_lacks(db):
     result = agent.run("q", ctx)
     assert result.steps[0].is_error and "unknown tool" in result.steps[0].output
     assert "describe_table" in TOOLS  # registered globally, just not in this toolset
+
+
+def test_assumption_check_leads_to_a_question(db):
+    from askoract.tools import ToolContext
+
+    with_assumption = (
+        "final_answer",
+        {"status": "answered", "answer": "2", "sql": COUNT_SQL, "assumption": "Germany only."},
+    )
+    user = ScriptedUser("Yes, only Germany.")
+    agent, ctx, llm, _ = make(
+        db,
+        [
+            tool_turn(with_assumption),
+            tool_turn(("ask_user", {"question": "Only Germany?"})),
+            tool_turn(with_assumption),
+        ],
+        user=user,
+    )
+    ctx = ToolContext(db=db, user=user, limits=Limits(), assumption_check=True)
+    result = agent.run("How many customers in the region?", ctx)
+    assert result.outcome is Outcome.ANSWERED and result.asked
+    assert [s.tool for s in result.steps] == ["final_answer", "ask_user", "final_answer"]
+    assert "Check your assumption" in result.steps[0].output

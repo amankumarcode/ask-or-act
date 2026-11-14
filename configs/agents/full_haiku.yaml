@@ -1,6 +1,6 @@
 name: full_haiku
 description: Same as full, on the cheaper model.
-prompt: agent/full_v1
+prompt: agent/full_v2
 tool_descriptions: tools/v1
 tools:
   - list_tables
@@ -12,3 +12,4 @@ tools:
   - final_answer
 llm:
   model: anthropic/claude-haiku-5-5
+assumption_check: true

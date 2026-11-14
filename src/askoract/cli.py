@@ -19,6 +19,7 @@ from askoract.datasets.sqlite_file import DatasetBuildError
 from askoract.eval.scorer import CaseScore
 from askoract.llm.client import LLMError
 from askoract.tracing.console import ConsoleSink
+from askoract.tracing.viewer import render_html, render_terminal
 from askoract.users import TerminalUser, leak_signals
 
 app = typer.Typer(
@@ -357,19 +358,33 @@ def eval_(
             f"{score.label:<12}{asked}  [dim]{score.tool_calls} tools ${score.cost_usd:.3f}[/]{why}"
         )
 
-    out = api.run_eval(
-        [p.name for p in profs],
-        suite,
-        limit=limit,
-        case_ids=case,
-        concurrency=concurrency,
-        max_cost_usd=max_cost,
-        resume=resume,
-        overrides=set_,
-        on_score=progress,
-        settings=settings,
-    )
+    try:
+        out = api.run_eval(
+            [p.name for p in profs],
+            suite,
+            limit=limit,
+            case_ids=case,
+            concurrency=concurrency,
+            max_cost_usd=max_cost,
+            resume=resume,
+            overrides=set_,
+            on_score=progress,
+            settings=settings,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=2) from None
     _print_eval_summary(out)
+
+
+@app.command()
+def publish(
+    run_id: Annotated[str, typer.Argument(help="Run id.")] = "latest",
+    name: Annotated[str | None, typer.Option(help="Folder name under results/.")] = None,
+) -> None:
+    """Copy a run's report into results/<name>/ and refresh the README results tables."""
+    dest = api.publish_results(run_id, name)
+    console.print(f"published to {dest.relative_to(Path.cwd(), walk_up=True)}; README updated")
 
 
 @app.command()
@@ -405,15 +420,107 @@ def _print_eval_summary(out: "api.EvalRun") -> None:
 
 
 @app.command()
-def demo() -> None:
-    """Run the showcase questions: baseline vs the full agent."""
-    _not_yet(8)
+def demo(
+    profile: Annotated[
+        list[str] | None, typer.Option("--profile", "-p", help="Override the demo profiles.")
+    ] = None,
+) -> None:
+    """Replay the showcase questions side by side: baseline vs the full agent."""
+    settings = api.get_settings()
+    demo_cfg = api.load_demo(settings)
+    profs = [api.get_profile(p, settings=settings) for p in (profile or demo_cfg.profiles)]
+    if missing := api.check_credentials(profs, settings):
+        console.print(f"[red]Missing keys: {missing}. Add them to .env.[/]")
+        raise typer.Exit(code=2)
+    with console.status("Running the showcase cases (cached after `make eval`)..."):
+        demo_cfg, out = api.run_demo(profiles=[p.name for p in profs], settings=settings)
+
+    scores = {(s.profile, s.case_id): s for s in out.scores}
+    questions = {
+        c.id: c.question
+        for name in {c["suite"] for c in demo_cfg.cases}
+        for c in api.get_suite(name, settings).cases
+    }
+    for item in demo_cfg.cases:
+        case_id = item["case"]
+        table = Table(show_header=True, header_style="bold", expand=True, show_lines=True)
+        table.add_column("", style="dim", width=10)
+        for p in profs:
+            table.add_column(p.name, ratio=1)
+        rows: dict[str, list[str]] = {"asked": [], "answer": [], "result": []}
+        for p in profs:
+            s = scores.get((p.name, case_id))
+            if s is None:
+                rows["asked"].append("-")
+                rows["answer"].append("-")
+                rows["result"].append("[dim]not run[/]")
+                continue
+            asked = (
+                "\n".join(f"[yellow]Q:[/] {q}\n[green]A:[/] {a}" for q, a in s.clarifications)
+                or "[dim]did not ask[/]"
+            )
+            rows["asked"].append(asked)
+            rows["answer"].append(s.answer or f"[red]{s.outcome}[/]")
+            rows["result"].append(
+                "[bold green]✓ correct[/]" if s.correct else f"[bold red]✗ {s.reason}[/]"
+            )
+        for label, cells in rows.items():
+            table.add_row(label, *cells)
+        console.print()
+        console.rule(f"[bold]{case_id}[/]  {questions.get(case_id, '')}")
+        console.print(f"[dim]{item.get('why', '')}[/]")
+        console.print(table)
+    billed = sum(s.billed_usd for s in out.scores)
+    console.print(
+        f"\n[dim]billed ${billed:.4f}"
+        f"{' (all from cache)' if billed == 0 else ''} · traces: askoract trace {out.run.id}[/]"
+    )
 
 
 @app.command()
-def trace(run_id: str = "latest", case_id: str | None = None) -> None:
-    """Show the step-by-step trace of one case."""
-    _not_yet(8)
+def trace(
+    run_id: Annotated[str, typer.Argument(help="Run id.")] = "latest",
+    case: Annotated[str | None, typer.Argument(help="Case id, e.g. A-036.")] = None,
+    profile: Annotated[str | None, typer.Option("--profile", "-p")] = None,
+    html_out: Annotated[
+        bool, typer.Option("--html", help="Also write a standalone HTML page.")
+    ] = False,
+) -> None:
+    """Show the steps an agent took for one question. Without a case, list the run's traces."""
+    settings = api.get_settings()
+    try:
+        names = api.list_traces(run_id, settings)
+        if case is None and names != ["ask"]:
+            _list_traces(run_id, names, settings)
+            return
+        view = api.load_trace_view(run_id, case, profile, settings)
+    except (KeyError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc.args[0]}[/]")
+        raise typer.Exit(code=2) from None
+    render_terminal(view, console)
+    if html_out:
+        run = api.resolve_run(settings, run_id)
+        name = f"{view.profile}-{view.case_id}" if view.case_id != "ask" else "ask"
+        out = run.dir / "html" / f"{name}.html"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(render_html(view))
+        console.print(f"[dim]html: {out}[/]")
+
+
+def _list_traces(run_id: str, names: list[str], settings) -> None:
+    run = api.resolve_run(settings, run_id)
+    scores = {(s.profile, s.case_id): s for s in api.load_scores(run.dir / api.RESULTS_FILE)}
+    table = Table("trace", "label", "trap", "asked", "result", title=f"traces in {run.id}")
+    for name in names:
+        prof, _, case_id = name.partition("/")
+        s = scores.get((prof, case_id))
+        if s is None:
+            table.add_row(name, "", "", "", "")
+            continue
+        result = "[green]✓[/]" if s.correct else f"[red]✗ {s.reason}[/]"
+        table.add_row(name, s.label, s.trap or "-", "yes" if s.asked else "", result)
+    console.print(table)
+    console.print("[dim]show one: askoract trace <run> <case> --profile <profile> [--html][/]")
 
 
 if __name__ == "__main__":

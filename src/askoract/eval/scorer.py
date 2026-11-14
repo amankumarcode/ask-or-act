@@ -179,7 +179,7 @@ def score_case(
         output_tokens=result.usage.output_tokens,
         cost_usd=round(result.cost_usd, 6),
         billed_usd=round(result.billed_usd, 6),
-        latency_ms=round(result.latency_ms, 1),
+        latency_ms=round(result.nominal_latency_ms, 1),
         answer=final.answer if final else None,
         sql=final.sql if final else None,
         assumption=final.assumption if final else None,

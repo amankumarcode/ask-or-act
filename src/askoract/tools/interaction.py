@@ -6,6 +6,15 @@ from askoract.agent.types import FinalAnswer
 from askoract.db.base import QueryError
 from askoract.tools.base import Tool, ToolContext, ToolResult, register_tool
 
+# Shown once when an answer arrives with an assumption and nothing was asked yet.
+ASSUMPTION_CHECK = (
+    'Not recorded yet. Check your assumption first: "{assumption}". Does it choose between '
+    "readings the person asking could reasonably mean (a definition, which records count, "
+    "the period, or the measure) that give different results? If so, that choice is theirs: "
+    "call ask_user. If it only covers technical details, or the question itself states it, "
+    "call final_answer again with the same answer."
+)
+
 
 class AskArgs(BaseModel):
     question: str = Field(description="One clarifying question, in business language.")
@@ -45,4 +54,16 @@ class SubmitFinalAnswer(Tool):
                 ctx.db.execute(args.sql, max_rows=1, timeout_s=ctx.limits.sql_timeout_s)
             except QueryError as exc:
                 return ToolResult.error(f"the sql in final_answer does not run: {exc}")
+        if (
+            ctx.assumption_check
+            and args.status == "answered"
+            and args.assumption
+            and not ctx.clarifications
+            and not ctx.assumption_reviewed
+        ):
+            ctx.assumption_reviewed = True
+            return ToolResult(
+                content=ASSUMPTION_CHECK.format(assumption=args.assumption),
+                data={"assumption_check": args.assumption},
+            )
         return ToolResult(content="Final answer recorded.", data=args.model_dump(), final=args)

@@ -192,8 +192,8 @@ cases:
     question: How many orders were shipped after their required date?
     interpretations:
       - id: shipped_late
-        intent: Shipped orders whose ship date is after the required date.
-        gold_sql: SELECT COUNT(*) FROM Orders WHERE ShippedDate > RequiredDate
+        intent: Shipped orders whose ship date is a later calendar day than the required date.
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE date(ShippedDate) > date(RequiredDate)
 
   - id: A-018
     label: clear
@@ -332,7 +332,7 @@ cases:
 
   - id: A-030
     label: clear
-    question: How many orders were shipped to Brazil in 2022?
+    question: How many orders placed in 2022 were shipped to Brazil?
     tags: [ship_vs_customer_country]
     interpretations:
       - id: ship_country
@@ -424,12 +424,12 @@ cases:
     interpretations:
       - id: shipped_late
         intent: Orders that shipped after their required date. Orders not yet shipped don't count.
-        gold_sql: SELECT COUNT(*) FROM Orders WHERE ShippedDate > RequiredDate
+        gold_sql: SELECT COUNT(*) FROM Orders WHERE date(ShippedDate) > date(RequiredDate)
       - id: late_or_unshipped
         intent: Orders that shipped after their required date, plus orders still not shipped whose required date has passed.
         gold_sql: |
           SELECT COUNT(*) FROM Orders
-          WHERE ShippedDate > RequiredDate
+          WHERE date(ShippedDate) > date(RequiredDate)
              OR (ShippedDate IS NULL AND RequiredDate < (SELECT MAX(OrderDate) FROM Orders))
 
   - id: A-035
@@ -443,13 +443,13 @@ cases:
         gold_sql: |
           SELECT COUNT(*) FROM Orders
           WHERE strftime('%Y', OrderDate) = '2018'
-            AND (ShippedDate > RequiredDate
+            AND (date(ShippedDate) > date(RequiredDate)
                  OR (ShippedDate IS NULL AND RequiredDate < (SELECT MAX(OrderDate) FROM Orders)))
       - id: shipped_late
         intent: 2018 orders that shipped after their required date only.
         gold_sql: |
           SELECT COUNT(*) FROM Orders
-          WHERE strftime('%Y', OrderDate) = '2018' AND ShippedDate > RequiredDate
+          WHERE strftime('%Y', OrderDate) = '2018' AND date(ShippedDate) > date(RequiredDate)
 
   - id: A-036
     label: ambiguous

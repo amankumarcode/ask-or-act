@@ -1,0 +1,20 @@
+# The showcase cases `make demo` replays, side by side for each profile.
+# After `make eval` all responses come from the cache, so the demo is free and shows
+# exactly what the eval measured. Chosen from results/haiku-prompt-v2.
+profiles: [baseline_haiku, full_haiku]
+cases:
+  - suite: northwind_a
+    case: A-039
+    why: >-
+      Ambiguous: "placed" can mean the customer's own country or the ship-to country,
+      and the rankings differ. The baseline guesses; the full agent asks, then answers.
+  - suite: northwind_b
+    case: B-001
+    why: >-
+      Trap: cancelled orders keep their order lines. Summing every order line inflates revenue
+      by about 8%; the full agent finds the Status column and excludes them.
+  - suite: northwind_b
+    case: B-016
+    why: >-
+      Trap: Payments.Amount is stored in cents with no comment saying so. The full agent
+      checks the values before summing and divides by 100.

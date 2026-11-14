@@ -41,7 +41,7 @@ def test_ask_writes_run_manifest_and_trace(settings):
     manifest = json.loads((out.run.dir / "manifest.json").read_text())
     assert manifest["question"] == "How many customers are in Germany?"
     assert manifest["profiles"][0]["name"] == "full"
-    assert set(manifest["prompts"]) >= {"agent/full_v1.md", "tools/v1.yaml"}
+    assert set(manifest["prompts"]) >= {"agent/full_v2.md", "tools/v1.yaml"}
 
     events = read_trace(out.trace_path)
     assert {e["context"]["case_id"] for e in events} == {"ask"}
@@ -53,6 +53,6 @@ def test_ask_writes_run_manifest_and_trace(settings):
 
 
 def test_system_prompts_render_cleanly(settings):
-    for name in ("agent/full_v1", "agent/minimal_v1"):
+    for name in ("agent/full_v1", "agent/full_v2", "agent/minimal_v1"):
         text = load_prompt(settings, name, dialect="sqlite", db_name="x", max_clarifications=2)
         assert "${" not in text and "sqlite" in text

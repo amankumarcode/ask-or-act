@@ -57,8 +57,14 @@ class AgentResult:
     usage: Usage = field(default_factory=Usage)
     cost_usd: float = 0.0  # nominal cost of every LLM call, cached or not
     billed_usd: float = 0.0  # what this run actually spent (cache hits are free)
-    latency_ms: float = 0.0
+    latency_ms: float = 0.0  # wall time of this run (near zero on a cache replay)
+    model_latency_ms: float = 0.0  # original latency of every LLM call, cached or not
     error: str | None = None
+
+    @property
+    def nominal_latency_ms(self) -> float:
+        """Latency as first measured: model time plus tool time. Stable across replays."""
+        return self.model_latency_ms + sum(s.latency_ms for s in self.steps)
 
     @property
     def asked(self) -> bool:

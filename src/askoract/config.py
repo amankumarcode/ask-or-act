@@ -73,6 +73,9 @@ class AgentProfile(_Strict):
     tools: list[str]
     llm: LLMConfig
     limits: Limits = Field(default_factory=Limits)
+    # Hand a stated assumption back once before accepting the answer, so the agent can
+    # decide whether it should have asked instead. Only applies when ask_user is available.
+    assumption_check: bool = False
 
 
 class Settings(_Strict):

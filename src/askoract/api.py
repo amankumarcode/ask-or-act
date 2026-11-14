@@ -5,11 +5,14 @@ and everything else patches the global settings, e.g.
     --set agent.llm.model=openrouter/openai/gpt-5  --set seed=7
 """
 
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 from askoract import datasets, factory
 from askoract.agent.loop import Agent
@@ -35,7 +38,8 @@ from askoract.llm.base import LLMClient
 from askoract.llm.client import missing_credentials
 from askoract.runs import Run, manifest, new_run, resolve_run
 from askoract.tools import TOOLS, Tool, ToolContext, ToolResult, Toolset
-from askoract.tracing.tracer import Sink, Tracer
+from askoract.tracing.tracer import Sink, Tracer, read_trace
+from askoract.tracing.viewer import TraceView, build_view
 from askoract.users import NoUser, SimulatedUser, UserChannel
 
 AGENT_PREFIX = "agent."
@@ -213,7 +217,7 @@ def ask(
                 question, sim_intent, settings=settings, tracer=tracer, llm=user_llm
             )
         agent = build_agent(prof, db, settings=settings, tracer=tracer, llm=llm)
-        ctx = ToolContext(db=db, user=user or NoUser(), limits=prof.limits, tracer=tracer)
+        ctx = factory.make_context(prof, db, user or NoUser(), tracer=tracer)
         result = agent.run(question, ctx)
     finally:
         tracer.close()
@@ -275,6 +279,7 @@ def run_eval(
     on_score: Callable[[CaseScore, int, int], None] | None = None,
     llm_factory: Callable | None = None,
     user_llm: LLMClient | None = None,
+    kind: str = "eval",
     settings: Settings | None = None,
 ) -> EvalRun:
     """Run suites for profiles, then write results.json and summary.md into the run dir.
@@ -306,6 +311,7 @@ def run_eval(
         llm_factory=llm_factory,
         sinks=sinks,
         on_score=on_score,
+        kind=kind,
     )
     write_report(out.run.dir, out.scores, profile_order=[p.name for p in profs])
     return out
@@ -319,3 +325,104 @@ def report(run_id: str = "latest", settings: Settings | None = None) -> Path:
         raise FileNotFoundError(f"run {run.id} has no scored cases yet")
     order = [p["name"] for p in manifest(run).get("profiles", [])]
     return write_report(run.dir, scores, profile_order=order)
+
+
+def list_traces(run_id: str = "latest", settings: Settings | None = None) -> list[str]:
+    """Trace names in a run: "ask" for an ask run, "<profile>/<case>" for an eval run."""
+    run = resolve_run(settings or get_settings(), run_id)
+    root = run.dir / "traces"
+    return sorted(str(p.relative_to(root).with_suffix("")) for p in root.rglob("*.jsonl"))
+
+
+def load_trace_view(
+    run_id: str = "latest",
+    case: str | None = None,
+    profile: str | None = None,
+    settings: Settings | None = None,
+) -> TraceView:
+    """The steps of one trace. `case` may be "A-001", "full/A-001", or omitted for ask runs."""
+    settings = settings or get_settings()
+    run = resolve_run(settings, run_id)
+    names = list_traces(run.id, settings)
+    if case is None and names == ["ask"]:
+        name = "ask"
+    else:
+        wanted = f"{profile}/{case}" if profile and case and "/" not in case else case
+        matches = [n for n in names if n == wanted or n.endswith(f"/{wanted}")]
+        if len(matches) != 1:
+            hint = "matches several profiles; pass --profile" if matches else "not found"
+            raise KeyError(f"trace {case!r} {hint}. Available: {', '.join(names[:12])}…")
+        name = matches[0]
+    events = read_trace(run.trace_path(name))
+    score = None
+    if "/" in name:
+        prof, case_id = name.split("/", 1)
+        for s in load_scores(run.dir / RESULTS_FILE):
+            if s.profile == prof and s.case_id == case_id:
+                score = s.to_dict()
+    return build_view(events, score)
+
+
+class DemoConfig(BaseModel):
+    """configs/demo.yaml: which cases the demo replays, for which profiles, and why."""
+
+    profiles: list[str]
+    cases: list[dict[str, str]]  # {suite, case, why}
+
+
+def load_demo(settings: Settings | None = None) -> DemoConfig:
+    settings = settings or get_settings()
+    return DemoConfig(**yaml.safe_load((settings.root / "configs" / "demo.yaml").read_text()))
+
+
+def run_demo(
+    *,
+    profiles: list[str] | None = None,
+    on_score: Callable[[CaseScore, int, int], None] | None = None,
+    settings: Settings | None = None,
+) -> tuple[DemoConfig, EvalRun]:
+    """Replay the showcase cases. After `make eval` every response comes from the cache."""
+    settings = settings or get_settings()
+    demo = load_demo(settings)
+    out = run_eval(
+        profiles or demo.profiles,
+        sorted({c["suite"] for c in demo.cases}),
+        case_ids=[c["case"] for c in demo.cases],
+        on_score=on_score,
+        kind="demo",
+        settings=settings,
+    )
+    return demo, out
+
+
+README_START = "<!-- results:start -->"
+README_END = "<!-- results:end -->"
+
+
+def publish_results(
+    run_id: str = "latest", name: str | None = None, settings: Settings | None = None
+) -> Path:
+    """Copy a run's report into results/<name>/ (versioned) and refresh the README tables."""
+    settings = settings or get_settings()
+    run = resolve_run(settings, run_id)
+    md = report(run.id, settings)  # rebuild from results.jsonl so the files are current
+    dest = settings.root / "results" / (name or run.id)
+    dest.mkdir(parents=True, exist_ok=True)
+    for fname in ("summary.md", "results.json", "manifest.json"):
+        shutil.copyfile(run.dir / fname, dest / fname)
+
+    readme = settings.root / "README.md"
+    text = readme.read_text()
+    if README_START in text and README_END in text:
+        body = md.read_text().split("\n", 2)[2].strip()  # drop the "# Results: ..." title
+        body = body.replace("## ", "#### ")
+        rel = dest.relative_to(settings.root)
+        block = (
+            f"{README_START}\n{body}\n\n"
+            f"Full report, every case score and the run manifest: [`{rel}/`]({rel}/)\n"
+            f"{README_END}"
+        )
+        head, _, rest = text.partition(README_START)
+        _, _, tail = rest.partition(README_END)
+        readme.write_text(head + block + tail)
+    return dest

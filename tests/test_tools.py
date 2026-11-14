@@ -189,3 +189,46 @@ def test_extra_tools_can_be_added(repo_root):
     profile = load_profile(settings, "baseline")
     ts = api.build_toolset(profile, "sqlite", settings=settings, extra_tools=[extra])
     assert "list_tables" in ts
+
+
+# -- assumption checkpoint -----------------------------------------------------------------
+
+ANSWER = {
+    "status": "answered",
+    "answer": "4",
+    "sql": "SELECT COUNT(*) FROM Customers",
+    "assumption": "Active means not discontinued.",
+}
+
+
+def test_assumption_check_fires_once_then_accepts(ctx):
+    ctx.assumption_check = True
+    first = call("final_answer", ANSWER, ctx)
+    assert first.final is None and not first.is_error
+    assert "Active means not discontinued." in first.content and "ask_user" in first.content
+    second = call("final_answer", ANSWER, ctx)
+    assert second.final is not None
+
+
+def test_assumption_check_skipped_after_asking_or_without_assumption(ctx):
+    ctx.assumption_check = True
+    assert call("final_answer", {**ANSWER, "assumption": None}, ctx).final is not None
+    ctx.clarifications.append(("q", "a"))
+    ctx.assumption_reviewed = False
+    assert call("final_answer", ANSWER, ctx).final is not None
+
+
+def test_assumption_check_off_by_default(ctx):
+    assert call("final_answer", ANSWER, ctx).final is not None
+
+
+def test_make_context_enables_check_only_with_ask_user(repo_root, db):
+    from askoract.factory import make_context
+    from askoract.users import NoUser
+
+    settings = load_settings(repo_root)
+    full = load_profile(settings, "full")
+    assert full.assumption_check and make_context(full, db, NoUser()).assumption_check
+    no_ask = full.model_copy(update={"tools": ["run_sql", "final_answer"]})
+    assert not make_context(no_ask, db, NoUser()).assumption_check
+    assert not make_context(load_profile(settings, "baseline"), db, NoUser()).assumption_check

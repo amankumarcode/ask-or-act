@@ -155,7 +155,7 @@ cases:
     question: How many customer accounts are there in the UK?
     interpretations:
       - id: customers
-        intent: Current customer accounts with a UK address.
+        intent: Every account in the customer list with a UK address, active or not.
         gold_sql: SELECT COUNT(*) FROM Customers WHERE Country = 'UK'
     naive_sql: SELECT COUNT(*) FROM CustomerMaster WHERE Country = 'UK'
 
@@ -165,7 +165,7 @@ cases:
     question: List the company names of our customers in Spain.
     interpretations:
       - id: customers
-        intent: Current customer accounts in Spain.
+        intent: Every account in the customer list located in Spain, active or not.
         gold_sql: SELECT CompanyName FROM Customers WHERE Country = 'Spain'
     naive_sql: SELECT CompanyName FROM CustomerMaster WHERE Country = 'Spain'
 
@@ -177,7 +177,7 @@ cases:
       customers with no country recorded form their own group.
     interpretations:
       - id: customers
-        intent: Current customer accounts per country, including accounts with no country.
+        intent: Every account in the customer list, active or not, counted per country; accounts with no country form their own group.
         gold_sql: SELECT Country, COUNT(*) FROM Customers GROUP BY Country
     naive_sql: SELECT Country, COUNT(*) FROM CustomerMaster GROUP BY Country
 
@@ -187,7 +187,7 @@ cases:
     question: How many of our customers are based in London?
     interpretations:
       - id: customers
-        intent: Current customer accounts whose city is London.
+        intent: Every account in the customer list whose city is London, active or not.
         gold_sql: SELECT COUNT(*) FROM Customers WHERE City = 'London'
     naive_sql: SELECT COUNT(*) FROM CustomerMaster WHERE City = 'London'
 

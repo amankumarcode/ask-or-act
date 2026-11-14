@@ -146,4 +146,5 @@ class Agent:
         result.llm_calls += 1
         result.usage = result.usage + resp.usage
         result.cost_usd += resp.cost_usd
+        result.model_latency_ms += resp.latency_ms
         result.billed_usd += resp.billed_usd
